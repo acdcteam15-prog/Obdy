@@ -93,7 +93,7 @@ object BatteryTest {
 /** One service item with its interval. 0 means "not used". */
 class MaintItem(
     val id: String, var name: String, var everyKm: Int, var everyMonths: Int,
-    var lastKm: Int = 0, var lastDateMs: Long = 0L,
+    var lastKm: Int = 0, var lastDateMs: Long = 0L, var note: String = "",
 )
 
 class Due(
@@ -105,21 +105,8 @@ class Due(
 }
 
 object Maintenance {
-    /** Starting intervals: the harder end of the maker's range, because heat and dust shorten oil, filters, fluids and batteries. */
-    fun defaults(): List<MaintItem> = listOf(
-        MaintItem("oil", "Engine oil and filter", 5000, 6),
-        MaintItem("air", "Engine air filter", 15000, 12),
-        MaintItem("cabin", "Cabin (A/C) filter", 10000, 6),
-        MaintItem("rotate", "Tyre rotation and balance", 10000, 0),
-        MaintItem("brakes", "Brake pads and discs check", 15000, 12),
-        MaintItem("brakefluid", "Brake fluid", 0, 24),
-        MaintItem("coolant", "Coolant", 100000, 60),
-        MaintItem("atf", "Automatic transmission fluid", 60000, 0),
-        MaintItem("plugs", "Spark plugs", 60000, 0),
-        MaintItem("battery", "Battery test", 0, 12),
-        MaintItem("ac", "A/C service", 0, 24),
-        MaintItem("wipers", "Wiper blades", 0, 12),
-    )
+    /** The schedule from the owner's manual, severe use (hot weather and city traffic). */
+    fun defaults(): List<MaintItem> = Manual.schedule(true)
 
     /** A job counts only once you have said when (or at what mileage) it was last done: otherwise it is "not recorded", never "overdue by the whole odometer". */
     fun due(item: MaintItem, currentKm: Int, nowMs: Long): Due {

@@ -43,6 +43,7 @@ import com.example.obdy.BuildConfig
 import com.example.obdy.Calc
 import com.example.obdy.Conn
 import com.example.obdy.DtcDb
+import com.example.obdy.Fuses
 import com.example.obdy.Gm
 import com.example.obdy.ObdyVm
 import com.example.obdy.Recording
@@ -74,6 +75,7 @@ fun ConnectScreen(vm: ObdyVm, askPermissions: () -> Unit) {
             Hint("• OBDLink EX or vLinker FS USB: wired, no pairing.")
             Hint("Avoid unbranded \"ELM327 v2.1\" clones: most are fake and fail on GM modules. BlueDriver only works with its own app, not Obdy.")
             Hint("Turn the ignition ON before connecting. The engine can stay off.")
+            SoftButton("Adapter has no power? Check the OBD port fuse", Modifier.fillMaxWidth()) { Fuses.find("panel", "Mini fuse", "14")?.let { vm.openFuse(it) } }
             if (vm.conn != Conn.Off) Label(vm.connStatus, bold = true)
         }
         Panel {
@@ -483,6 +485,7 @@ fun AiScreen(vm: ObdyVm) {
         if (t != null) Panel {
             Title("AI answer")
             SelectionContainer { Text(t.replace("**", "").replace("##", ""), color = Brand.TextPrimary, fontSize = 14.sp) }
+            FuseChips(vm, t)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SoftButton("Copy", Modifier.weight(1f)) { copyText(ctx, t); vm.say("Copied") }
                 SoftButton("PDF report", Modifier.weight(1f)) { vm.makeReport() }

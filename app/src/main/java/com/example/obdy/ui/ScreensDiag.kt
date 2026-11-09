@@ -193,6 +193,7 @@ fun GuidedScreen(vm: ObdyVm) {
                     if (r != null) Panel {
                         Title("Solution")
                         SelectionContainer { Text(r.replace("**", "").replace("##", ""), color = Brand.TextPrimary, fontSize = 14.sp) }
+                        FuseChips(vm, r)
                         Hint("A guide, not a verdict. If it says to stop and see a workshop, do that.")
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

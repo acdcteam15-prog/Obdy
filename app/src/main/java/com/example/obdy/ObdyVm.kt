@@ -518,6 +518,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val results = ArrayList<String>()
                 val ok = withCar { clearEmissionCodes() }
                 results.add(if (ok == true) "Engine and transmission: cleared" else "Engine and transmission: no confirmation")
+                if (ok == true) addEvent("clear", "Codes cleared", faults.joinToString { it.code.take(5) }.take(120))
                 for (m in foundModules) {
                     if (m.probe.resp == "7E8" || m.probe.resp == "7EA") continue
                     withCar { clearModule(m) }?.let { results.add(it) }
@@ -649,7 +650,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun aiPrompt(focus: String?, extra: String = "", withFormat: Boolean = true): String {
         val rep = repairHistory()
-        val full = if (rep.isBlank()) extra else extra + "\nREPAIR AND SERVICE HISTORY (already done, do not suggest it again as the first step):\n" + rep
+        val tl = Timeline.summary(timelineEvents(), 15)
+        var full = extra + "\n" + Manual.aiFacts() + "\n" + Fuses.aiFacts(faults.map { it.code })
+        if (rep.isNotBlank()) full += "\nREPAIR AND SERVICE HISTORY (already done, do not suggest it again as the first step):\n" + rep
+        if (tl.isNotBlank()) full += "\nTIMELINE OF EVENTS, FAULTS AND WORK (newest first; look for links between work or events and later faults):\n" + tl
         return AiPrompt.build(car, faults, monitors, freeze, liveSnapshot(), batHistory.firstOrNull(), symptoms, dueList().filter { it.overdue }.map { it.item.name }, focus, full, withFormat)
     }
 
@@ -1071,7 +1075,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     private fun reloadAll() {
         car = store.loadCar(); symptoms = store.symptoms; trips = store.loadTrips(); scanHistory = store.loadScans(); batHistory = store.loadBattery()
-        maint = store.loadMaintenance(); aiHistory = store.loadAi(); repairs = store.loadRepairs(); docs = store.loadDocs(); healthHistory = store.loadHealth()
+        maint = store.loadMaintenance(); aiHistory = store.loadAi(); repairs = store.loadRepairs(); docs = store.loadDocs(); healthHistory = store.loadHealth(); logged = store.loadEvents()
         providers = store.loadProviders(); ignored = store.loadIgnored(); liveSel = store.livePids; applyTheme(store.themeKey)
         wifiHost = store.wifiHost; wifiPort = store.wifiPort.toString()
     }
@@ -1110,6 +1114,69 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
             if (r.text != null) chat.add(ChatMsg(false, r.text.replace("**", "").replace("##", ""), false)) else chatError = r.error
             chatBusy = false
+        }
+    }
+
+    // ------------------------------------------------------------------ history and links, manual schedule
+    var logged by mutableStateOf(store.loadEvents())
+    var linkAiText by mutableStateOf<String?>(null)
+    var linkAiBusy by mutableStateOf(false)
+    var linkAiError by mutableStateOf<String?>(null)
+
+    fun timelineEvents(): List<Event> = Timeline.build(repairs, logged, scanHistory, batHistory)
+
+    fun addEvent(type: String, title: String, detail: String, timeMs: Long = System.currentTimeMillis(), km: Int = car.odometerKm) {
+        logged = (logged + LoggedEvent(newId(), timeMs, type, title, detail, km)).sortedByDescending { it.timeMs }
+        store.saveEvents(logged)
+        say("Added to your history")
+    }
+
+    fun deleteEvent(id: String) { logged = logged.filter { it.id != id }; store.saveEvents(logged) }
+
+    fun linkFor(code: String): Link? = Linker.links(timelineEvents()).firstOrNull { it.code == code.take(5) }
+
+    /** The AI looks at the whole timeline and says which faults could come from earlier work or events. */
+    fun askLinks() {
+        val p = activeProvider
+        if (p == null) { linkAiError = "Add an AI service in Settings first."; return }
+        if (linkAiBusy) return
+        linkAiBusy = true; linkAiError = null
+        val prompt = aiPrompt(null,
+            "Task: look at the TIMELINE and the faults. Say which fault or symptom could be caused by earlier work or events (for example an oil change followed by a cam timing code, a refuel followed by an EVAP code, a battery change followed by network codes). " +
+            "For each likely link say: what, why, and the one check that would prove or rule it out. Say clearly when two things are probably NOT related. Plain text, short, no tables.", withFormat = false)
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt) }
+            linkAiBusy = false
+            if (r.text != null) linkAiText = r.text.replace("**", "").replace("##", "") else linkAiError = r.error
+        }
+    }
+
+    /** Puts the manual's intervals into the service reminders. Your last-done dates and your own items are kept. */
+    fun applyManualSchedule(severe: Boolean) {
+        val def = Manual.schedule(severe)
+        val byId = maint.associateBy { it.id }
+        val merged = ArrayList<MaintItem>()
+        for (d in def) {
+            val old = byId[d.id]
+            if (old != null) { old.name = d.name; old.everyKm = d.everyKm; old.everyMonths = d.everyMonths; old.note = d.note; merged.add(old) } else merged.add(d)
+        }
+        for (o in maint) if (def.none { it.id == o.id }) merged.add(o)
+        maint = merged; saveMaint()
+        say("Manual schedule applied" + if (severe) " (severe use)" else "")
+    }
+
+    // ------------------------------------------------------------------ fuse boxes
+    var fuseSel by mutableStateOf<FuseSlot?>(null)
+
+    fun openFuse(s: FuseSlot?) { fuseSel = s; overlay = "fuses" }
+
+    /** [outcome]: 0 = fuse was fine, 1 = blown and replaced, 2 = blew again after replacing. Goes into the history so it can be linked to later faults. */
+    fun logFuseCheck(s: FuseSlot, outcome: Int) {
+        val name = (if (s.box == "engine") "engine box " else "dash box ") + s.label.lowercase() + " (" + s.usage + ")"
+        when (outcome) {
+            0 -> addEvent("note", "Checked fuse: $name", "The fuse was fine.")
+            1 -> addEvent("repair", "Replaced blown fuse: $name", "Same size and rating.")
+            else -> addEvent("repair", "Fuse keeps blowing: $name", "Blew again after replacing: a short or overload. Do not fit a bigger fuse.")
         }
     }
 

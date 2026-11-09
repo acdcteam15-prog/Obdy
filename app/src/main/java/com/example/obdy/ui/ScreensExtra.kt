@@ -272,6 +272,7 @@ fun ChatScreen(vm: ObdyVm) {
             Panel(if (m.fromUser) Modifier.padding(start = 40.dp) else Modifier.padding(end = 24.dp)) {
                 Label(if (m.fromUser) "You" + (if (m.hasImage) " (with photo)" else "") else "Assistant", bold = true, size = 12, color = if (m.fromUser) Brand.Accent else Brand.TextSecondary)
                 SelectionContainer { Text(m.text, color = Brand.TextPrimary, fontSize = 14.sp) }
+                if (!m.fromUser) FuseChips(vm, m.text)
             }
         }
         if (vm.chatBusy) Label("Thinking...", color = Brand.Amber, bold = true)

@@ -145,14 +145,14 @@ class Store(private val ctx: Context) {
     // ---- maintenance (the list is the defaults, with your own intervals and last-done values on top)
     fun loadMaintenance(): List<MaintItem> {
         val saved = readJson("maint.json").mapObjects { o ->
-            MaintItem(o.getString("id"), o.getString("name"), o.getInt("km"), o.getInt("mo"), o.optInt("lastKm"), o.optLong("lastMs"))
+            MaintItem(o.getString("id"), o.getString("name"), o.getInt("km"), o.getInt("mo"), o.optInt("lastKm"), o.optLong("lastMs"), o.optString("note"))
         }
         if (saved.isEmpty()) return Maintenance.defaults()
         return saved
     }
 
     fun saveMaintenance(items: List<MaintItem>) {
-        writeJson("maint.json", JSONArray().also { a -> items.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("km", it.everyKm).put("mo", it.everyMonths).put("lastKm", it.lastKm).put("lastMs", it.lastDateMs)) } })
+        writeJson("maint.json", JSONArray().also { a -> items.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("km", it.everyKm).put("mo", it.everyMonths).put("lastKm", it.lastKm).put("lastMs", it.lastDateMs).put("note", it.note)) } })
     }
 
     // ---- AI history
@@ -175,6 +175,13 @@ class Store(private val ctx: Context) {
 
     fun receiptsDir(): File = File(ctx.filesDir, "receipts").also { it.mkdirs() }
     fun routesDir(): File = File(ctx.filesDir, "routes").also { it.mkdirs() }
+
+    // ---- things that happened (refuelled, car wash, battery disconnected, warning light on ...), used to link events together
+    fun loadEvents(): List<LoggedEvent> = readJson("events.json").mapObjects { LoggedEvent(it.getString("id"), it.getLong("t"), it.optString("type", "note"), it.optString("title"), it.optString("detail"), it.optInt("km")) }.sortedByDescending { it.timeMs }
+
+    fun saveEvents(list: List<LoggedEvent>) {
+        writeJson("events.json", JSONArray().also { a -> list.takeLast(400).forEach { a.put(JSONObject().put("id", it.id).put("t", it.timeMs).put("type", it.type).put("title", it.title).put("detail", it.detail).put("km", it.km)) } })
+    }
 
     // ---- registration / insurance dates
     fun loadDocs(): List<DocReminder> {
@@ -199,7 +206,7 @@ class Store(private val ctx: Context) {
     }
 
     // ---- backup: everything except recordings, in one text file
-    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "providers.json")
+    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "events.json", "providers.json")
 
     fun exportAll(includeKeys: Boolean): String {
         val root = JSONObject().put("app", "obdy").put("version", 1)

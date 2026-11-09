@@ -266,3 +266,109 @@ class ServiceTest {
         assertNull(Maintenance.projectedKmDate(-5, 50.0, 0L))
     }
 }
+
+class HistoryTest {
+    private val day = 86_400_000L
+    private fun repair(t: Long, title: String, cat: String = "Service", km: Int = 100000) = RepairRecord("r$t", t, title, cat, 0.0, km, "", "", "")
+    private fun scan(t: Long, km: Int, vararg codes: String) = ScanRecord(t, km, null, codes.map { Fault(it, "Engine control (ECM)", "stored") }, null, "")
+
+    @Test fun oilThenLight() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(listOf(repair(t0, "Engine oil and filter")), emptyList(), listOf(scan(t0 + day, 100020, "P0011")), emptyList())
+        val l = Linker.links(ev)
+        assertEquals(1, l.size)
+        assertEquals(2, l[0].level)
+        assertEquals("P0011", l[0].code)
+        assertTrue(l[0].why.contains("oil", ignoreCase = true))
+    }
+
+    @Test fun refuelThenEvap() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(emptyList(), listOf(LoggedEvent("a", t0, "fuel", "Refuelled", "", 50000)), listOf(scan(t0 + day / 2, 50030, "P0455")), emptyList())
+        val l = Linker.links(ev)
+        assertEquals(2, l[0].level); assertTrue(l[0].check.contains("fuel cap", ignoreCase = true))
+    }
+
+    @Test fun batteryThenCommunicationCode() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(listOf(repair(t0, "New battery", "Parts")), emptyList(), listOf(scan(t0 + 2 * day, 100100, "U0100")), emptyList())
+        assertTrue(Linker.links(ev).any { it.code == "U0100" && it.level >= 1 })
+    }
+
+    @Test fun laterEventsDoNotCount() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(listOf(repair(t0 + 5 * day, "Engine oil and filter")), emptyList(), listOf(scan(t0, 100000, "P0011")), emptyList())
+        assertTrue(Linker.links(ev).isEmpty())
+    }
+
+    @Test fun farApartDoesNotCount() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(listOf(repair(t0, "Engine oil and filter")), emptyList(), listOf(scan(t0 + 90 * day, 100100, "P0011")), emptyList())
+        assertTrue(Linker.links(ev).isEmpty())
+    }
+
+    @Test fun recurrenceAndRepairThatDidNotHelp() {
+        val t0 = 1_700_000_000_000L
+        val scans = listOf(scan(t0, 100000, "P0300"), scan(t0 + 2 * day, 100050), scan(t0 + 10 * day, 100300, "P0300"))
+        val ev = Timeline.build(listOf(repair(t0 + day, "Spark plugs and coils", "Parts", 100020)), emptyList(), scans, emptyList())
+        val ins = Linker.insights(ev)
+        assertTrue(ins.any { it.contains("appeared 2 times") })
+        assertTrue(ins.any { it.contains("Spark plugs and coils") })
+        assertTrue(ev.any { it.type == "gone" })
+    }
+
+    @Test fun summaryText() {
+        val t0 = 1_700_000_000_000L
+        val ev = Timeline.build(listOf(repair(t0, "Oil")), emptyList(), emptyList(), emptyList())
+        assertTrue(Timeline.summary(ev).contains("Oil"))
+    }
+}
+
+class ManualTest {
+    @Test fun scheduleAndVin() {
+        val sev = Manual.schedule(true).first { it.id == "atf" }
+        val nor = Manual.schedule(false).first { it.id == "atf" }
+        assertEquals(72000, sev.everyKm); assertEquals(156000, nor.everyKm)
+        assertEquals(36000, Manual.schedule(true).first { it.id == "cabin" }.everyKm)
+        assertTrue(Manual.engineFromVin("1G1PE5SB1D7123456")!!.contains("2.4L"))
+        assertTrue(Manual.engineFromVin("1G1PE5SBXD1123456")!!.contains("only code R"))
+        assertNull(Manual.engineFromVin("short"))
+        assertNotNull(Manual.noteForCode("P0455")); assertNotNull(Manual.noteForCode("P0300")); assertNull(Manual.noteForCode("U9999").takeIf { false })
+        assertTrue(Manual.messages.size > 25)
+        assertEquals(14, Manual.services.size)
+    }
+}
+
+class FuseTest {
+    @Test fun dataIsComplete() {
+        assertEquals(68, Fuses.engine.slots.count { it.clickable })
+        assertEquals(29, Fuses.panel.slots.size)
+        assertTrue(Fuses.all.all { it.x in 0f..1f && it.y in 0f..1f && it.x + it.w <= 1.01f && it.y + it.h <= 1.01f })
+        assertEquals(Fuses.all.size, Fuses.all.map { it.key }.toSet().size)
+        assertEquals("Ignition Coils", Fuses.find("engine", "Mini fuse", "9")!!.usage)
+        assertEquals("Diagnostic Link Connector", Fuses.find("panel", "Mini fuse", "14")!!.usage)
+        assertEquals("Electric Parking Brake", Fuses.find("engine", "J-case fuse", "27")!!.usage)
+    }
+
+    @Test fun searching() {
+        assertTrue(Fuses.search("horn").any { it.usage.contains("Horn") && it.id == "51" })
+        assertTrue(Fuses.search("12v socket").any { it.usage.contains("Power Outlet") })
+        assertTrue(Fuses.search("wipers").any { it.usage == "Front Wiper" })
+        assertTrue(Fuses.search("obd").any { it.id == "14" && it.box == "panel" })
+        assertTrue(Fuses.search("brake light").isNotEmpty())
+        assertTrue(Fuses.search("k1").any { it.id == "K1" })
+        assertTrue(Fuses.search("fuse 9").any { it.usage == "Ignition Coils" })
+        assertTrue(Fuses.search("xyzzy").isEmpty())
+        assertTrue(Fuses.search("").isEmpty())
+    }
+
+    @Test fun codesAndMentions() {
+        assertTrue(Fuses.forCode("P0301").any { it.usage == "Ignition Coils" })
+        assertTrue(Fuses.forCode("P0455").any { it.usage == "Canister Vent Solenoid" })
+        assertTrue(Fuses.forCode("U0140").any { it.box == "panel" })
+        assertTrue(Fuses.forCode("P9999").isEmpty())
+        val m = Fuses.mentions("Check the Ignition Coils fuse and the Diagnostic Link Connector fuse.")
+        assertEquals(2, m.size)
+        assertTrue(Fuses.aiFacts(listOf("P0301")).contains("Ignition Coils"))
+    }
+}

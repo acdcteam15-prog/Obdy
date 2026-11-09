@@ -64,6 +64,7 @@ import com.example.obdy.DtcDb
 import com.example.obdy.Fault
 import com.example.obdy.Docs
 import com.example.obdy.Gm
+import com.example.obdy.Manual
 import com.example.obdy.MaintItem
 import com.example.obdy.Maintenance
 import com.example.obdy.ObdyVm
@@ -161,6 +162,9 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "expenses" -> ExpensesScreen(vm)
                     "chat" -> ChatScreen(vm)
                     "dash" -> DashScreen(vm)
+                    "guide" -> GuideScreen(vm)
+                    "timeline" -> TimelineScreen(vm)
+                    "fuses" -> FusesScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -405,8 +409,9 @@ fun FaultsScreen(vm: ObdyVm) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SoftButton("AI analysis", Modifier.weight(1f)) { vm.overlay = "ai" }
-            SoftButton("PDF report", Modifier.weight(1f)) { vm.makeReport() }
+            SoftButton("History and links", Modifier.weight(1f)) { vm.overlay = "timeline" }
         }
+        SoftButton("PDF report", Modifier.fillMaxWidth()) { vm.makeReport() }
         if (vm.scanHistory.isNotEmpty()) Panel {
             Title("Earlier scans")
             for (s in vm.scanHistory.take(6)) Label("${fmtDate(s.timeMs)}  ·  ${s.faults.size} code(s)" + (s.faults.take(3).joinToString(prefix = "  ", transform = { it.code }).takeIf { s.faults.isNotEmpty() } ?: ""), size = 13)
@@ -446,6 +451,9 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
                     Label("Likely causes (most common first):", bold = true, size = 13)
                     for (x in causes) Label("•  $x", size = 13)
                 } else Hint("No built-in notes for this code. Use the AI analysis for this one.")
+                Manual.noteForCode(f.code)?.let { Label("From your manual", bold = true, size = 13); Hint(it) }
+                FuseCodeChips(vm, f.code)
+                vm.linkFor(f.code)?.let { l -> Label("Possible link: appeared ${l.gapDays} day(s) after \"${l.cause.title}\"", color = Brand.Amber, size = 13) }
                 if (f.raw.isNotBlank()) Hint("Raw: ${f.raw}")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SoftButton("Where is it?", Modifier.weight(1f)) { vm.showParts(f.code) }
@@ -467,6 +475,9 @@ private class ToolItem(val ic: Ic, val title: String, val sub: String, val open:
 @Composable
 fun ToolsScreen(vm: ObdyVm) {
     val items = listOf(
+        ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse, see where") { vm.fuseSel = null; vm.overlay = "fuses" },
+        ToolItem(Ic.Doc, "Car guide", "Specs, schedule, lights") { vm.overlay = "guide" },
+        ToolItem(Ic.Chart, "History and links", "Link events and faults") { vm.overlay = "timeline" },
         ToolItem(Ic.Chat, "Ask about your car", "Chat, photo, voice") { vm.overlay = "chat" },
         ToolItem(Ic.Search, "Find the cause", "Questions, then a fix") { vm.gCode = null; vm.overlay = "guided" },
         ToolItem(Ic.Pin, "Where is the part?", "Diagram of the car") { vm.showParts(null) },
@@ -511,6 +522,7 @@ fun CarScreen(vm: ObdyVm) {
     var editing by remember { mutableStateOf<MaintItem?>(null) }
     var doneFor by remember { mutableStateOf<MaintItem?>(null) }
     var bulk by remember { mutableStateOf(false) }
+    var noteOpen by remember { mutableStateOf<String?>(null) }
     ScreenFrame("My car", null) {
         Panel {
             Title("Profile")
@@ -546,6 +558,8 @@ fun CarScreen(vm: ObdyVm) {
                 if (nOver > 0) "$nOver overdue" + (if (nSoon > 0) ", $nSoon soon" else "") else if (nSoon > 0) "$nSoon due soon" else "Nothing overdue",
                 bold = true, color = if (nOver > 0) Brand.Red else if (nSoon > 0) Brand.Amber else Brand.Green,
             )
+            SoftButton("Use the manual's schedule (hot-weather severe use)", Modifier.fillMaxWidth()) { vm.applyManualSchedule(true) }
+            Hint("Fills the intervals from your owner's manual: oil, filters, plugs, transmission fluid, coolant, belts. Your last-done dates are kept.")
             Hint("Tap Edit and enter when each job was last done (date and mileage). Obdy then counts the next due date and mileage from it. Press Done after a service: it also goes into your repair and cost history.")
             if (kpd != null) Hint("Your usual driving: about ${Calc.fmt(kpd * 30, 0)} km a month (worked out from the mileages you entered).")
             if (nNone > 0) SoftButton("Set the $nNone not-recorded jobs to one date", Modifier.fillMaxWidth()) { bulk = true }
@@ -557,8 +571,11 @@ fun CarScreen(vm: ObdyVm) {
                 }
                 val col = if (d.overdue) Brand.Red else if (d.soon) Brand.Amber else Brand.TextSecondary
                 Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    Label(d.item.name, bold = true)
-                    Label(status, color = col, size = 12)
+                    Row(Modifier.fillMaxWidth().clickable { noteOpen = if (noteOpen == d.item.id) null else d.item.id }, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Label(d.item.name, bold = true); Label(status, color = col, size = 12) }
+                        if (d.item.note.isNotBlank()) AppIcon(Ic.Info, size = 18.dp, color = Brand.TextSecondary)
+                    }
+                    AnimatedVisibility(visible = noteOpen == d.item.id && d.item.note.isNotBlank(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) { Hint(d.item.note) }
                     val parts = ArrayList<String>()
                     d.nextDueMs?.let { parts.add("by " + Docs.formatDate(it)) }
                     d.nextDueKm?.let { parts.add("at $it km") }
@@ -580,6 +597,10 @@ fun CarScreen(vm: ObdyVm) {
             SoftButton("Add a service item", Modifier.fillMaxWidth()) { editing = MaintItem(vm.newId(), "", 10000, 12) }
         }
         DocsPanel(vm)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SoftButton("Car guide", Modifier.weight(1f)) { vm.overlay = "guide" }
+            SoftButton("History and links", Modifier.weight(1f)) { vm.overlay = "timeline" }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SoftButton("Repairs and costs", Modifier.weight(1f)) { vm.overlay = "expenses" }
             SoftButton("PDF report", Modifier.weight(1f)) { vm.makeReport() }
