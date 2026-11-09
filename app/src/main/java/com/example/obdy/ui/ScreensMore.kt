@@ -138,9 +138,46 @@ fun ConnectScreen(vm: ObdyVm, askPermissions: () -> Unit) {
 
 // ====================================================================================== Settings
 @Composable
+fun UpdatesPanel(vm: ObdyVm) {
+    val ready = vm.updateReady
+    val latest = vm.updateLatest
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { AppIcon(Ic.Bolt, size = 22.dp, color = Brand.Accent); Title("Updates") }
+        Label("Installed: ${BuildConfig.VERSION_LABEL}")
+        Hint("Updates come from GitHub: ${BuildConfig.UPDATE_REPO}")
+        if (ready != null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("Ready to install", Brand.Green)
+                Label("Build ${vm.updateReadyCode}  ·  " + Calc.fmt(ready.length() / 1048576.0, 1) + " MB", size = 13)
+            }
+            Hint("Already downloaded and saved on this phone. Install whenever you like, even without internet.")
+            GradientButton("Install now", Brand.GoodBrush) { vm.installUpdate() }
+            val notes = latest?.notes
+            if (!notes.isNullOrBlank()) { Label("What's new", bold = true, size = 13); Hint(notes.take(500)) }
+        } else if (latest != null) {
+            Label("Update found: build ${latest.code}" + (if (latest.published.isNotBlank()) "  (${latest.published})" else ""), color = Brand.Amber, bold = true)
+            GradientButton(if (vm.updateBusy) "Downloading..." else "Download now", Brand.MainBrush, enabled = !vm.updateBusy) { vm.downloadUpdate() }
+        }
+        if (vm.updateProgress >= 0) { ProgressBar(vm.updateProgress / 100f); Hint("${vm.updateProgress}%") }
+        if (vm.updateText.isNotBlank()) Label(vm.updateText, size = 13, color = Brand.Accent)
+        SoftButton(if (vm.updateBusy) "Please wait..." else "Check for updates", Modifier.fillMaxWidth(), enabled = !vm.updateBusy) { vm.checkUpdate() }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.autoUpdate, onCheckedChange = { vm.changeAutoUpdate(it) }); Spacer(Modifier.width(8.dp))
+            Column { Label("Find and download updates by itself", bold = true, size = 14); Hint("Checks when the app opens, then keeps the download ready.") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.wifiOnlyUpdate, onCheckedChange = { vm.changeWifiOnly(it) }); Spacer(Modifier.width(8.dp))
+            Column { Label("Download only on Wi-Fi", bold = true, size = 14); Hint("Saves mobile data. Pressing the button always downloads.") }
+        }
+        if (vm.lastUpdateCheck > 0) Hint("Last checked ${fmtDate(vm.lastUpdateCheck)}")
+    }
+}
+
+@Composable
 fun SettingsScreen(vm: ObdyVm) {
     val ctx = LocalContext.current
-    ScreenFrame("Settings", { vm.overlay = null }) {
+    ScreenFrame("Settings", { vm.overlay = null }, subtitle = "Everything in one place") {
+        UpdatesPanel(vm)
         Panel {
             Title("Look")
             for (p in Palettes.all) {
@@ -149,12 +186,12 @@ fun SettingsScreen(vm: ObdyVm) {
                     Spacer(Modifier.width(4.dp)); Box(Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(p.card))
                     Spacer(Modifier.width(10.dp))
                     Label(p.name, bold = vm.themeKey == p.key)
-                    if (vm.themeKey == p.key) { Spacer(Modifier.width(8.dp)); Text("✓", color = Brand.Accent, fontSize = 16.sp) }
+                    if (vm.themeKey == p.key) { Spacer(Modifier.width(8.dp)); AppIcon(Ic.Check, size = 18.dp, color = Brand.Accent) }
                 }
             }
         }
         Panel {
-            Title("Connection")
+            Title("Connection and screen")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.autoConnect, onCheckedChange = { vm.changeAutoConnect(it) }); Spacer(Modifier.width(8.dp))
                 Column { Label("Connect automatically when the app opens", bold = true); Hint("Uses the last adapter you connected to.") }
@@ -164,26 +201,20 @@ fun SettingsScreen(vm: ObdyVm) {
                 Column { Label("Keep the screen on", bold = true); Hint("Stops the screen from sleeping during a drive or test.") }
             }
         }
-        ProvidersPanel(vm)
-        ExtraSettingsPanels(vm)
         Panel {
-            Title("Updates")
-            Label("This build: ${BuildConfig.VERSION_LABEL}")
-            Hint("Updates come from the GitHub Releases of: ${BuildConfig.UPDATE_REPO}")
-            if (vm.updateText.isNotBlank()) Label(vm.updateText, size = 13, color = Brand.Accent)
-            if (vm.updateProgress >= 0) Hint("${vm.updateProgress}%")
-            SoftButton(if (vm.updateBusy) "Please wait..." else "Check for updates", enabled = !vm.updateBusy) { vm.checkUpdate() }
-            if (vm.updateInfo != null) {
-                GradientButton("Download and install", Brand.MainBrush, enabled = !vm.updateBusy) { vm.installUpdate() }
-                val notes = vm.updateInfo?.notes.orEmpty()
-                if (notes.isNotBlank()) Hint(notes.take(400))
+            Title("Live data")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = vm.showExt, onCheckedChange = { vm.showExt = it }); Spacer(Modifier.width(8.dp))
+                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature and oil life on the Live screen. Shown only if the module answers.") }
             }
         }
+        ExtraSettingsPanels(vm)
+        ProvidersPanel(vm)
         Panel {
             Title("Help me find problems")
             Hint("If something does not work, share the full conversation with the adapter. It shows exactly what the car answered.")
-            SoftButton("Share the log") { vm.shareText(AppLog.dump().ifBlank { "(log is empty)" }) }
-            SoftButton("Copy the log") { copyText(ctx, AppLog.dump()); vm.say("Copied") }
+            SoftButton("Share the log", Modifier.fillMaxWidth()) { vm.shareText(AppLog.dump().ifBlank { "(log is empty)" }) }
+            SoftButton("Copy the log", Modifier.fillMaxWidth()) { copyText(ctx, AppLog.dump()); vm.say("Copied") }
         }
     }
 }

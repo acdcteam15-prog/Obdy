@@ -41,7 +41,7 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Ask about your car (chat)**: the AI sees your data; attach a photo or ask by voice.
 - **Dashboard mode**: big landscape gauges.
 - **Trip routes**: optional GPS track saved as GPX per trip.
-- **Updates from GitHub**: Settings > Updates.
+- **Updates from GitHub**: automatic check and background download (Wi-Fi only by default), kept on the phone until you press Install; a red dot on the gear and a banner on Home show when one is ready. Settings (gear, top-right of every main screen) now holds all settings in one place.
 
 ## Look and feel
 Simple Home (status card plus six icon tiles), an icon grid for Tools, a custom icon set drawn in code (no icon library), animated tab and screen
@@ -70,7 +70,7 @@ Avoid unbranded "ELM327 v2.1" clones: most are fake and fail on GM modules. Blue
    **public** repository `Obdy`. It uploads, builds on GitHub (first build about 8-12 minutes), runs the unit tests, and puts `Obdy-buildN.apk` in `APK\`.
    If it fails, `build-error.txt` opens: send it to Claude.
 3. Install that APK on the phone once.
-4. **Updates**: double-click **`Publish-Update.bat`** (optional: `Publish-Update.bat what is new`). It builds the release APK and publishes it as a
+4. **Updates**: every `Rebuild-APK.bat` build is also published as a GitHub Release, so the app updates itself: it finds the new build when it opens, downloads it once into private storage, and **Settings > Updates > Install now** installs it at any time, even offline. (`Publish-Update.bat` still exists for a release-optimised build.) Older text: double-click **`Publish-Update.bat`** (optional: `Publish-Update.bat what is new`). It builds the release APK and publishes it as a
    GitHub Release. On the phone: Obdy > Settings > Updates > Check for updates > Download and install.
    Remoty works too: share the new zip to Remoty, it runs `Rebuild-APK.bat` on the laptop.
 

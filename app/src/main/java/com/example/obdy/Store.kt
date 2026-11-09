@@ -40,6 +40,9 @@ class Store(private val ctx: Context) {
     var fastMode: Boolean get() = prefs.getBoolean("fast", true); set(v) { prefs.edit().putBoolean("fast", v).apply() }
     var autoReconnect: Boolean get() = prefs.getBoolean("reconnect", true); set(v) { prefs.edit().putBoolean("reconnect", v).apply() }
     var recordRoute: Boolean get() = prefs.getBoolean("route", false); set(v) { prefs.edit().putBoolean("route", v).apply() }
+    var autoUpdate: Boolean get() = prefs.getBoolean("autoUpdate", true); set(v) { prefs.edit().putBoolean("autoUpdate", v).apply() }
+    var wifiOnlyUpdate: Boolean get() = prefs.getBoolean("wifiUpdate", true); set(v) { prefs.edit().putBoolean("wifiUpdate", v).apply() }
+    var lastUpdateCheck: Long get() = prefs.getLong("updCheck", 0L); set(v) { prefs.edit().putLong("updCheck", v).apply() }
     var symptoms: String get() = prefs.getString("symptoms", "") ?: ""; set(v) { prefs.edit().putString("symptoms", v).apply() }
     var livePids: List<Int>
         get() = (prefs.getString("livePids", null) ?: Pids.defaultLive.joinToString(",")).split(",").mapNotNull { it.trim().toIntOrNull() }

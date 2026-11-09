@@ -44,6 +44,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,6 +86,10 @@ fun HeaderButton(text: String, onClick: () -> Unit) {
 }
 
 /** Title bar (with a back arrow when [onBack] is given) and a scrolling column. */
+/** Set by the root: opens Settings. Every main screen shows a gear in its top-right corner. */
+val LocalOpenSettings = compositionLocalOf<(() -> Unit)?> { null }
+val LocalUpdateBadge = compositionLocalOf { false }
+
 @Composable
 fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize()) {
@@ -93,6 +100,13 @@ fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", act
                 if (subtitle.isNotEmpty()) Text(subtitle, color = Brand.TextSecondary, fontSize = 12.sp)
             }
             actions()
+            val openSettings = LocalOpenSettings.current
+            if (onBack == null && openSettings != null) {
+                Box {
+                    IconTap(Ic.Gear, openSettings)
+                    if (LocalUpdateBadge.current) Box(Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 9.dp).size(10.dp).clip(CircleShape).background(Brand.Red))
+                }
+            }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Brand.CardBorder))
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
@@ -123,6 +137,7 @@ fun BottomBar(vm: ObdyVm) {
 
 @Composable
 fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
+    CompositionLocalProvider(LocalOpenSettings provides { vm.overlay = "settings" }, LocalUpdateBadge provides (vm.updateReady != null)) {
     Box(Modifier.fillMaxSize()) {
         Crossfade(targetState = vm.overlay ?: "main", animationSpec = tween(220), label = "screens") { ov ->
             if (ov != "main") {
@@ -176,6 +191,7 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
             enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
         ) { Pill(keep.value, Brand.Accent) }
     }
+    }
 }
 
 // ====================================================================================== Home
@@ -210,9 +226,18 @@ private fun HeroCard(vm: ObdyVm) {
 
 @Composable
 fun HomeScreen(vm: ObdyVm) {
-    ScreenFrame("Obdy", null, subtitle = vm.car.name, actions = { IconTap(Ic.Gear) { vm.overlay = "settings" } }) {
+    ScreenFrame("Obdy", null, subtitle = vm.car.name) {
         val on = vm.conn == Conn.On
         Reveal(0) { HeroCard(vm) }
+        if (vm.updateReady != null) Reveal(1) {
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppIcon(Ic.Bolt, size = 24.dp, color = Brand.Green)
+                    Column(Modifier.weight(1f)) { Title("Update ready"); Hint("Build ${vm.updateReadyCode} is saved on this phone.") }
+                }
+                GradientButton("Install now", Brand.GoodBrush) { vm.installUpdate() }
+            }
+        }
         Reveal(1) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Tile(Ic.Search, "Scan codes", "Engine and gearbox", Modifier.weight(1f), accent = true, enabled = on && !vm.scanBusy) { vm.scan(false); vm.tab = 2 }
@@ -291,11 +316,6 @@ fun LiveScreen(vm: ObdyVm) {
                     for (p in row) GaugeCard(p.name, vm.liveValues[p.id], p.unit, p.min, p.max, Modifier.weight(1f), decimals = if (p.max <= 10) 2 else if (p.max <= 200) 1 else 0, hint = p.hint)
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = vm.showExt, onCheckedChange = { vm.showExt = it })
-                Spacer(Modifier.width(8.dp))
-                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temp and oil life. Shown only if the module answers.") }
             }
             if (vm.showExt) for (e in Gm.extPids) {
                 val v = vm.extValues[e.name]
@@ -564,7 +584,6 @@ fun CarScreen(vm: ObdyVm) {
             SoftButton("Repairs and costs", Modifier.weight(1f)) { vm.overlay = "expenses" }
             SoftButton("PDF report", Modifier.weight(1f)) { vm.makeReport() }
         }
-        SoftButton("Settings", Modifier.fillMaxWidth()) { vm.overlay = "settings" }
     }
     val e = editing
     if (e != null) {

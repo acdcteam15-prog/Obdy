@@ -1,4 +1,5 @@
-# Builds the debug APK when Rebuild-APK.bat asks for it (or when Remoty runs it). Nothing is published; the APK is attached to the run.
+# Builds the APK when Rebuild-APK.bat asks for it (or when Remoty runs it).
+# The APK is attached to the run AND published as a GitHub Release, so the app can update itself (Settings > Updates).
 name: Build
 on:
   workflow_dispatch:
@@ -8,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   app:
@@ -44,6 +45,30 @@ jobs:
           name: obdy-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
+
+      - name: Name the APK for the in-app updater
+        id: pack
+        run: |
+          set -euo pipefail
+          VERSION_NAME=$(grep '^versionName=' version.properties | cut -d= -f2 | tr -d '\r')
+          OFFSET=$(grep '^versionCodeOffset=' version.properties | cut -d= -f2 | tr -d '\r')
+          COUNT=$(git rev-list --count HEAD)
+          CODE=$((OFFSET + COUNT))
+          NAME="Obdy-${VERSION_NAME//./_}-build${CODE}.apk"
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/*.apk "dist/$NAME"
+          git log -1 --pretty='%s' > notes.md
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ steps.pack.outputs.code }}
+          name: Obdy ${{ steps.pack.outputs.version }} (build ${{ steps.pack.outputs.code }})
+          body_path: notes.md
+          files: dist/${{ steps.pack.outputs.name }}
+          make_latest: true
 
       - uses: actions/upload-artifact@v5
         if: failure()

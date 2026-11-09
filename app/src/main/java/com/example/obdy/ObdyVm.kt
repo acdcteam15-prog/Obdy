@@ -689,41 +689,81 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ------------------------------------------------------------------ updates from GitHub
+    // ------------------------------------------------------------------ updates from GitHub (downloaded once, installed any time)
     var updateText by mutableStateOf("")
     var updateBusy by mutableStateOf(false)
     var updateProgress by mutableStateOf(-1)
-    var updateInfo by mutableStateOf<UpdateInfo?>(null)
+    var updateLatest by mutableStateOf<UpdateInfo?>(null)
+    var updateReady by mutableStateOf<File?>(null)
+    var updateReadyCode by mutableStateOf(0)
+    var autoUpdate by mutableStateOf(store.autoUpdate)
+    var wifiOnlyUpdate by mutableStateOf(store.wifiOnlyUpdate)
+    var lastUpdateCheck by mutableStateOf(store.lastUpdateCheck)
+    fun changeAutoUpdate(v: Boolean) { autoUpdate = v; store.autoUpdate = v }
+    fun changeWifiOnly(v: Boolean) { wifiOnlyUpdate = v; store.wifiOnlyUpdate = v }
 
-    fun checkUpdate() {
+    /** Looks in the updates folder: is there a downloaded update newer than the installed app? */
+    fun refreshUpdateState() {
+        val r = Updater.ready(ctx)
+        updateReady = r?.first; updateReadyCode = r?.second ?: 0
+        if (r == null && updateLatest != null && updateLatest!!.code <= Updater.installedCode(ctx)) updateLatest = null
+    }
+
+    private suspend fun fetchUpdate(u: UpdateInfo) {
+        updateProgress = 0; updateText = "Downloading build ${u.code}..."
+        try {
+            withContext(Dispatchers.IO) { Updater.download(ctx, u) { p -> updateProgress = p } }
+            refreshUpdateState()
+            updateText = "Update ready: build ${u.code} is saved on this phone. Press Install whenever you like."
+        } finally { updateProgress = -1 }
+    }
+
+    /** [manual] = you pressed the button (shows every message); otherwise it runs quietly when the app opens. */
+    fun checkUpdate(manual: Boolean = true) {
         if (updateBusy) return
-        updateBusy = true; updateText = "Checking GitHub..."; updateInfo = null
+        updateBusy = true
+        if (manual) updateText = "Checking GitHub..."
         viewModelScope.launch {
             try {
                 val u = withContext(Dispatchers.IO) { Updater.check(ctx) }
-                updateInfo = u
-                updateText = if (u == null) "You have the newest version (${BuildConfig.VERSION_LABEL})." else "A newer build is available: ${u.name}"
+                lastUpdateCheck = System.currentTimeMillis(); store.lastUpdateCheck = lastUpdateCheck
+                updateLatest = u
+                refreshUpdateState()
+                if (u == null) { if (manual) updateText = "You have the newest version (${BuildConfig.VERSION_LABEL})."; return@launch }
+                if (updateReadyCode >= u.code) { updateText = "Update ready: build ${u.code} is saved on this phone. Press Install whenever you like."; return@launch }
+                if (!manual && wifiOnlyUpdate && !Updater.onUnmetered(ctx)) { updateText = "Update found (build ${u.code}). It will download on Wi-Fi."; return@launch }
+                fetchUpdate(u)
             } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                updateText = e.message ?: "Could not check for updates."
+                if (manual) updateText = e.message ?: "Could not check for updates."
             } finally { updateBusy = false }
         }
     }
 
-    fun installUpdate() {
-        val u = updateInfo ?: return
+    /** Quiet check when the app opens (at most every 6 hours): finds and downloads a new version in the background. */
+    fun autoCheckUpdate() {
+        refreshUpdateState()
+        if (!autoUpdate) return
+        if (System.currentTimeMillis() - lastUpdateCheck < 6 * 3600_000L && updateReady == null && updateLatest == null) return
+        checkUpdate(manual = false)
+    }
+
+    /** Downloads the update that was found but not saved yet (for example because it was waiting for Wi-Fi). */
+    fun downloadUpdate() {
+        val u = updateLatest ?: return
         if (updateBusy) return
-        updateBusy = true; updateProgress = 0; updateText = "Downloading..."
+        updateBusy = true
         viewModelScope.launch {
-            try {
-                val f = withContext(Dispatchers.IO) { Updater.download(ctx, u) { p -> updateProgress = p } }
-                updateText = "Opening the installer..."
-                if (!Updater.install(ctx, f)) updateText = "Allow Obdy to install apps, come back, and press Install again."
-            } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                updateText = "Download failed: ${e.message}"
-            } finally { updateBusy = false; updateProgress = -1 }
+            try { fetchUpdate(u) } catch (e: CancellationException) { throw e } catch (e: Exception) { updateText = "Download failed: ${e.message}" } finally { updateBusy = false }
         }
     }
 
+    /** Installs the saved update at once: no download, works without internet. */
+    fun installUpdate() {
+        val f = updateReady ?: run { updateText = "No saved update. Press Check for updates."; return }
+        val problem = Updater.problem(ctx, f)
+        if (problem != null) { updateText = problem; return }
+        if (!Updater.install(ctx, f)) updateText = "Allow Obdy to install apps (Android opened the setting), come back and press Install again."
+    }
 
     // ------------------------------------------------------------------ guided diagnosis: questions -> solution
     var gCode by mutableStateOf<String?>(null)

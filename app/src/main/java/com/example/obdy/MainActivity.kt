@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             vm.checkServiceNotice()
             vm.autoConnectNow()
+            vm.autoCheckUpdate()
         }
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -68,5 +69,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         vm.refreshPermission()
+        vm.refreshUpdateState()
     }
 }

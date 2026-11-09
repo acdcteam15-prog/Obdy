@@ -6,4 +6,5 @@
     <files-path name="backups" path="backups/" />
     <files-path name="receipts" path="receipts/" />
     <files-path name="routes" path="routes/" />
+    <files-path name="updates" path="updates/" />
 </paths>
