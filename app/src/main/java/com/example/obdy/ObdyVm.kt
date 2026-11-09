@@ -98,6 +98,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     fun changeRoute(v: Boolean) { recordRoute = v; store.recordRoute = v; if (v && !RouteRecorder(ctx).hasPermission()) askLocation?.invoke() }
     var askLocation: (() -> Unit)? = null
     var keepScreenOn by mutableStateOf(store.keepScreenOn)
+    /** True only while something is actually running on a live connection. Otherwise the phone may turn the screen off normally. */
+    val keepAwake: Boolean get() = conn == Conn.On && (liveRunning || tripOn || recOn || healthBusy || batBusy != null || scanBusy || testsBusy || doctorBusy || clearing)
     fun changeKeepScreen(v: Boolean) { keepScreenOn = v; store.keepScreenOn = v }
 
     // ------------------------------------------------------------------ connection

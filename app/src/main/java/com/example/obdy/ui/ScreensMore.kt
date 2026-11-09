@@ -198,7 +198,7 @@ fun SettingsScreen(vm: ObdyVm) {
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.keepScreenOn, onCheckedChange = { vm.changeKeepScreen(it) }); Spacer(Modifier.width(8.dp))
-                Column { Label("Keep the screen on", bold = true); Hint("Stops the screen from sleeping during a drive or test.") }
+                Column { Label("Keep the screen on while working", bold = true); Hint("Only while connected and showing live data, a trip, a recording, a scan or a test. Without a connection, or on other screens, the screen turns off normally.") }
             }
         }
         Panel {

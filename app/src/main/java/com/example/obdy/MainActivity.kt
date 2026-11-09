@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         }
         setContent {
             ObdyTheme {
-                val keepOn = vm.keepScreenOn || vm.overlay == "dash"
+                val keepOn = vm.keepScreenOn && vm.keepAwake
                 val dash = vm.overlay == "dash"
                 SideEffect {
                     requestedOrientation = if (dash) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
