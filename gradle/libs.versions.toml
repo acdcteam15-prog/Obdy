@@ -1,0 +1,32 @@
+# Versions copied from the Remoty project (same toolchain, known to build).
+[versions]
+agp = "9.5.0"            # needs the Gradle wrapper in this repo (9.8.2) and JDK 17+ (CI uses 21)
+kotlin = "2.4.21"
+core = "1.19.1"
+appcompat = "1.8.0"
+activity = "1.13.0"
+lifecycle = "2.11.0"
+compose = "1.12.1"
+material3 = "1.4.0"
+coroutines = "1.11.0"
+junit = "4.13.2"
+usbserial = "3.10.0"      # usb-serial-for-android (FTDI, CH340, CP210x, PL2303, CDC drivers)
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-activity-ktx = { module = "androidx.activity:activity-ktx", version.ref = "activity" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+androidx-lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
+compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "compose" }
+compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "material3" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+junit = { module = "junit:junit", version.ref = "junit" }
+usb-serial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usbserial" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

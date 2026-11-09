@@ -1,0 +1,3 @@
+-keep class com.example.obdy.** { *; }
+-keepattributes SourceFile,LineNumberTable,*Annotation*,Signature,InnerClasses,EnclosingMethod
+-keep class com.hoho.android.usbserial.** { *; }
