@@ -92,13 +92,16 @@ object BatteryTest {
 
 /** One service item with its interval. 0 means "not used". */
 class MaintItem(
-    val id: String, val name: String, var everyKm: Int, var everyMonths: Int,
+    val id: String, var name: String, var everyKm: Int, var everyMonths: Int,
     var lastKm: Int = 0, var lastDateMs: Long = 0L,
 )
 
-class Due(val item: MaintItem, val kmLeft: Int?, val daysLeft: Int?) {
-    val overdue: Boolean get() = (kmLeft != null && kmLeft < 0) || (daysLeft != null && daysLeft < 0)
-    val soon: Boolean get() = !overdue && ((kmLeft != null && kmLeft <= 500) || (daysLeft != null && daysLeft <= 14))
+class Due(
+    val item: MaintItem, val kmLeft: Int?, val daysLeft: Int?,
+    val recorded: Boolean = true, val nextDueMs: Long? = null, val nextDueKm: Int? = null,
+) {
+    val overdue: Boolean get() = recorded && ((kmLeft != null && kmLeft < 0) || (daysLeft != null && daysLeft < 0))
+    val soon: Boolean get() = recorded && !overdue && ((kmLeft != null && kmLeft <= 500) || (daysLeft != null && daysLeft <= 14))
 }
 
 object Maintenance {
@@ -118,13 +121,30 @@ object Maintenance {
         MaintItem("wipers", "Wiper blades", 0, 12),
     )
 
+    /** A job counts only once you have said when (or at what mileage) it was last done: otherwise it is "not recorded", never "overdue by the whole odometer". */
     fun due(item: MaintItem, currentKm: Int, nowMs: Long): Due {
-        val kmLeft = if (item.everyKm > 0) item.lastKm + item.everyKm - currentKm else null
-        val daysLeft = if (item.everyMonths > 0 && item.lastDateMs > 0) {
-            val dueMs = item.lastDateMs + item.everyMonths * 30.4375 * 86_400_000.0
-            ((dueMs - nowMs) / 86_400_000.0).toInt()
-        } else null
-        return Due(item, kmLeft, daysLeft)
+        val kmKnown = item.everyKm > 0 && item.lastKm > 0
+        val dateKnown = item.everyMonths > 0 && item.lastDateMs > 0
+        val kmLeft = if (kmKnown) item.lastKm + item.everyKm - currentKm else null
+        val nextMs = if (dateKnown) (item.lastDateMs + item.everyMonths * 30.4375 * 86_400_000.0).toLong() else null
+        val daysLeft = if (nextMs != null) Math.floorDiv(nextMs - nowMs, 86_400_000L).toInt() else null
+        return Due(item, kmLeft, daysLeft, kmKnown || dateKnown, nextMs, if (kmKnown) item.lastKm + item.everyKm else null)
+    }
+
+    /** When the kilometre limit will be reached if you keep driving at [kmPerDay]. Null when it is already passed or unknown. */
+    fun projectedKmDate(kmLeft: Int, kmPerDay: Double, nowMs: Long): Long? =
+        if (kmLeft > 0 && kmPerDay > 0.0) nowMs + (kmLeft / kmPerDay * 86_400_000.0).toLong() else null
+}
+
+object Usage {
+    /** Average kilometres per day from (time, odometer) points. Needs two points at least 14 days apart. */
+    fun kmPerDay(points: List<Pair<Long, Int>>): Double? {
+        val p = points.filter { it.second > 0 && it.first > 0 }.sortedBy { it.first }
+        if (p.size < 2) return null
+        val days = (p.last().first - p.first().first) / 86_400_000.0
+        val km = p.last().second - p.first().second
+        if (days < 14 || km <= 0) return null
+        return km / days
     }
 }
 

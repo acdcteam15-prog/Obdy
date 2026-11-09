@@ -229,3 +229,40 @@ class ExtrasTest {
         assertEquals(1.11, Gpx.distanceKm(p), 0.05)
     }
 }
+
+class ServiceTest {
+    @Test fun neverRecordedIsNotOverdue() {
+        val item = MaintItem("cabin", "Cabin filter", 10000, 6)
+        val d = Maintenance.due(item, 289000, 1_700_000_000_000L)
+        assertFalse(d.recorded); assertFalse(d.overdue); assertFalse(d.soon); assertNull(d.kmLeft)
+    }
+
+    @Test fun dateOnlyCountsFromDate() {
+        val day = 86_400_000L
+        val last = Docs.parseDate("2026-01-01")!!
+        val item = MaintItem("oil", "Oil", 5000, 6, lastKm = 0, lastDateMs = last)
+        val d = Maintenance.due(item, 289000, last + 100 * day)
+        assertTrue(d.recorded); assertNull(d.kmLeft); assertNull(d.nextDueKm)
+        assertTrue(d.daysLeft!! in 80..85)
+        assertFalse(d.overdue)
+        assertTrue(Maintenance.due(item, 289000, last + 200 * day).overdue)
+    }
+
+    @Test fun kmAndDateBothCount() {
+        val last = Docs.parseDate("2026-06-01")!!
+        val item = MaintItem("oil", "Oil", 5000, 6, lastKm = 290000, lastDateMs = last)
+        val d = Maintenance.due(item, 293000, last + 30L * 86_400_000L)
+        assertEquals(2000, d.kmLeft); assertEquals(295000, d.nextDueKm); assertNotNull(d.nextDueMs)
+    }
+
+    @Test fun usageAndProjection() {
+        val day = 86_400_000L
+        val k = Usage.kmPerDay(listOf(0L + day to 100000, 61 * day to 102000))
+        assertEquals(33.3, k!!, 0.5)
+        assertNull(Usage.kmPerDay(listOf(day to 100000, 5 * day to 100200)))
+        assertNull(Usage.kmPerDay(listOf(day to 100000)))
+        val p = Maintenance.projectedKmDate(1000, 50.0, 0L)!!
+        assertEquals(20L * day, p)
+        assertNull(Maintenance.projectedKmDate(-5, 50.0, 0L))
+    }
+}

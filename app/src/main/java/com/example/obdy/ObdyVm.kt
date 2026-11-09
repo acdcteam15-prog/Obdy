@@ -583,6 +583,36 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun dueList(): List<Due> = maint.map { Maintenance.due(it, car.odometerKm, System.currentTimeMillis()) }
     fun markDone(item: MaintItem) { item.lastKm = car.odometerKm; item.lastDateMs = System.currentTimeMillis(); saveMaint() }
+
+    /** "Done": records the date and mileage of the job, and adds it to the repair and cost history. */
+    fun markDone(item: MaintItem, dateMs: Long, km: Int, cost: Double, shop: String) {
+        item.lastKm = km; item.lastDateMs = dateMs; saveMaint()
+        saveRepair(RepairRecord(newId(), dateMs, item.name, "Service", cost, km, shop, "", ""))
+        say("Saved: ${item.name}")
+    }
+
+    fun saveMaintItem(item: MaintItem) {
+        maint = if (maint.any { it.id == item.id }) maint.map { if (it.id == item.id) item else it } else maint + item
+        saveMaint()
+    }
+
+    fun deleteMaintItem(id: String) { maint = maint.filter { it.id != id }; saveMaint() }
+
+    /** For jobs with no record yet: one date and mileage for all of them (for example the last full service). */
+    fun setAllUnrecorded(dateMs: Long, km: Int) {
+        val now = System.currentTimeMillis()
+        for (it in maint) if (!Maintenance.due(it, car.odometerKm, now).recorded) { it.lastDateMs = dateMs; it.lastKm = km }
+        saveMaint()
+    }
+
+    /** Usual driving, worked out from the mileages you have entered over time (scans, repairs, service records). */
+    fun kmPerDay(): Double? {
+        val pts = ArrayList<Pair<Long, Int>>()
+        for (r in repairs) if (r.km > 0) pts.add(r.timeMs to r.km)
+        for (s in scanHistory) if (s.odometerKm > 0) pts.add(s.timeMs to s.odometerKm)
+        for (m in maint) if (m.lastKm > 0 && m.lastDateMs > 0) pts.add(m.lastDateMs to m.lastKm)
+        return Usage.kmPerDay(pts)
+    }
     fun setInterval(item: MaintItem, km: Int, months: Int) { item.everyKm = km; item.everyMonths = months; saveMaint() }
 
     fun dueNames(): List<String> = dueList().filter { it.overdue || it.soon }.map { it.item.name } + docNotices()
@@ -597,7 +627,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun checkServiceNotice() {
         val now = System.currentTimeMillis()
-        Notifier.serviceDue(ctx, dueList().filter { it.overdue }.map { it.item.name } + docs.filter { it.dueMs > 0 && it.daysLeft(now) <= 14 }.map { if (it.daysLeft(now) < 0) "${it.name} expired" else "${it.name} in ${it.daysLeft(now)} days" })
+        Notifier.serviceDue(ctx, dueList().filter { it.overdue || it.soon }.map { (if (it.overdue) "Overdue: " else "Soon: ") + it.item.name } + docs.filter { it.dueMs > 0 && it.daysLeft(now) <= 14 }.map { if (it.daysLeft(now) < 0) "${it.name} expired" else "${it.name} in ${it.daysLeft(now)} days" })
     }
 
     // ------------------------------------------------------------------ AI analysis and report

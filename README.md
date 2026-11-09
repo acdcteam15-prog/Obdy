@@ -35,6 +35,7 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Inspection check**: warning light, codes and readiness monitors, with what to drive to finish missing monitors.
 - **Health check and trends**: 25 seconds at idle judged by simple rules; averages are kept and graphed, with drift warnings (for example falling charging voltage).
 - **Repairs and costs**: log with category, cost, mileage, workshop and a receipt photo; totals by category; included in the PDF and given to the AI.
+- **Service reminders with last-done dates**: enter when each job was last done (date and mileage), press Done after a service (it is added to the repair log), add your own items, set many items to one date at once. Next due date and mileage are counted from the last-done record, with a forecast of the date the km limit will arrive based on your usual driving.
 - **Registration and insurance dates** with reminders.
 - **Backup and restore** (one file, AI keys optional).
 - **Ask about your car (chat)**: the AI sees your data; attach a photo or ask by voice.

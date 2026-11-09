@@ -44,7 +44,10 @@ import com.example.obdy.Calc
 import com.example.obdy.Conn
 import com.example.obdy.DtcDb
 import com.example.obdy.Fault
+import com.example.obdy.Docs
 import com.example.obdy.Gm
+import com.example.obdy.MaintItem
+import com.example.obdy.Maintenance
 import com.example.obdy.ObdyVm
 import com.example.obdy.Pids
 import kotlinx.coroutines.delay
@@ -430,7 +433,9 @@ fun CarScreen(vm: ObdyVm) {
     var tank by remember(c) { mutableStateOf(Calc.fmt(c.tankLiters, 0)) }
     var price by remember(c) { mutableStateOf(if (c.fuelPrice > 0) Calc.fmt(c.fuelPrice, 2) else "") }
     var notes by remember(c) { mutableStateOf(c.notes) }
-    var editing by remember { mutableStateOf<com.example.obdy.MaintItem?>(null) }
+    var editing by remember { mutableStateOf<MaintItem?>(null) }
+    var doneFor by remember { mutableStateOf<MaintItem?>(null) }
+    var bulk by remember { mutableStateOf(false) }
     ScreenFrame("My car", null) {
         Panel {
             Title("Profile")
@@ -458,22 +463,46 @@ fun CarScreen(vm: ObdyVm) {
         }
         Panel {
             Title("Service reminders")
-            Hint("Intervals start on the hard side (heat and dust). Change them to what your workshop says. Keep the mileage above up to date.")
-            for (d in vm.dueList()) {
+            val now = System.currentTimeMillis()
+            val list = vm.dueList().sortedBy { if (it.overdue) 0 else if (it.soon) 1 else if (it.recorded) 2 else 3 }
+            val kpd = vm.kmPerDay()
+            val nOver = list.count { it.overdue }; val nSoon = list.count { it.soon }; val nNone = list.count { !it.recorded }
+            Label(
+                if (nOver > 0) "$nOver overdue" + (if (nSoon > 0) ", $nSoon soon" else "") else if (nSoon > 0) "$nSoon due soon" else "Nothing overdue",
+                bold = true, color = if (nOver > 0) Brand.Red else if (nSoon > 0) Brand.Amber else Brand.Green,
+            )
+            Hint("Tap Edit and enter when each job was last done (date and mileage). Obdy then counts the next due date and mileage from it. Press Done after a service: it also goes into your repair and cost history.")
+            if (kpd != null) Hint("Your usual driving: about ${Calc.fmt(kpd * 30, 0)} km a month (worked out from the mileages you entered).")
+            if (nNone > 0) SoftButton("Set the $nNone not-recorded jobs to one date", Modifier.fillMaxWidth()) { bulk = true }
+            for (d in list) {
                 val status = when {
+                    !d.recorded -> "Not recorded yet: tap Edit and enter when it was last done"
                     d.overdue -> "Overdue" + (d.kmLeft?.takeIf { it < 0 }?.let { " by ${-it} km" } ?: "") + (d.daysLeft?.takeIf { it < 0 }?.let { " (${-it} days)" } ?: "")
-                    else -> listOfNotNull(d.kmLeft?.let { "$it km left" }, d.daysLeft?.let { "$it days left" }).joinToString("  ·  ").ifEmpty { "Not done yet: press Done today after the next service" }
+                    else -> listOfNotNull(d.kmLeft?.let { "$it km left" }, d.daysLeft?.let { "$it days left" }).joinToString("  ·  ")
                 }
                 val col = if (d.overdue) Brand.Red else if (d.soon) Brand.Amber else Brand.TextSecondary
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).clickable { editing = d.item }) {
-                        Label(d.item.name, bold = true)
-                        Label(status, color = col, size = 12)
-                        Hint("Every " + listOfNotNull(d.item.everyKm.takeIf { it > 0 }?.let { "$it km" }, d.item.everyMonths.takeIf { it > 0 }?.let { "$it months" }).joinToString(" or ") + "  (tap to change)")
+                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Label(d.item.name, bold = true)
+                    Label(status, color = col, size = 12)
+                    val parts = ArrayList<String>()
+                    d.nextDueMs?.let { parts.add("by " + Docs.formatDate(it)) }
+                    d.nextDueKm?.let { parts.add("at $it km") }
+                    if (parts.isNotEmpty()) {
+                        var line = "Next: " + parts.joinToString("  or  ")
+                        val left = d.kmLeft
+                        if (kpd != null && left != null && left > 0) Maintenance.projectedKmDate(left, kpd, now)?.let { line += "  (at your usual driving the km limit comes about " + Docs.formatDate(it) + ")" }
+                        Hint(line)
                     }
-                    SoftButton("Done today") { vm.markDone(d.item) }
+                    if (d.recorded && d.item.everyKm > 0 && d.item.lastKm <= 0) Hint("Add the mileage in Edit to also track kilometres.")
+                    if (d.recorded && d.item.everyMonths > 0 && d.item.lastDateMs <= 0) Hint("Add the date in Edit to also track time.")
+                    Hint("Every " + listOfNotNull(d.item.everyKm.takeIf { it > 0 }?.let { "$it km" }, d.item.everyMonths.takeIf { it > 0 }?.let { "$it months" }).joinToString(" or ").ifEmpty { "(no interval)" })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SoftButton("Done", Modifier.weight(1f)) { doneFor = d.item }
+                        SoftButton("Edit", Modifier.weight(1f)) { editing = d.item }
+                    }
                 }
             }
+            SoftButton("Add a service item", Modifier.fillMaxWidth()) { editing = MaintItem(vm.newId(), "", 10000, 12) }
         }
         DocsPanel(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -484,17 +513,90 @@ fun CarScreen(vm: ObdyVm) {
     }
     val e = editing
     if (e != null) {
-        var ek by remember(e) { mutableStateOf(e.everyKm.toString()) }
-        var em by remember(e) { mutableStateOf(e.everyMonths.toString()) }
+        var name by remember(e.id) { mutableStateOf(e.name) }
+        var ek by remember(e.id) { mutableStateOf(e.everyKm.toString()) }
+        var em by remember(e.id) { mutableStateOf(e.everyMonths.toString()) }
+        var ld by remember(e.id) { mutableStateOf(if (e.lastDateMs > 0) Docs.formatDate(e.lastDateMs) else "") }
+        var lk by remember(e.id) { mutableStateOf(if (e.lastKm > 0) e.lastKm.toString() else "") }
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text(e.name) },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Field("Every (km), 0 = not used", ek, { ek = it }, number = true)
-                Field("Every (months), 0 = not used", em, { em = it }, number = true)
-            } },
-            confirmButton = { TextButton(onClick = { vm.setInterval(e, ek.trim().toIntOrNull() ?: e.everyKm, em.trim().toIntOrNull() ?: e.everyMonths); editing = null }) { Text("Save") } },
+            title = { Text(if (e.name.isBlank()) "New service item" else e.name) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Field("Name", name, { name = it })
+                    Label("Last done", bold = true, size = 13)
+                    Field("Date (YYYY-MM-DD, for example 2026-03-15)", ld, { ld = it })
+                    Field("Mileage then (km)", lk, { lk = it }, number = true)
+                    Label("Repeat every", bold = true, size = 13)
+                    Field("Kilometres (0 = not used)", ek, { ek = it }, number = true)
+                    Field("Months (0 = not used)", em, { em = it }, number = true)
+                    if (vm.maint.any { it.id == e.id }) SoftButton("Delete this item", Modifier.fillMaxWidth()) { vm.deleteMaintItem(e.id); editing = null }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = if (ld.isBlank()) 0L else Docs.parseDate(ld)
+                    if (dateMs == null) vm.say("Write the date like 2026-03-15")
+                    else if (name.isBlank()) vm.say("Give it a name")
+                    else {
+                        e.name = name.trim(); e.everyKm = ek.trim().toIntOrNull() ?: 0; e.everyMonths = em.trim().toIntOrNull() ?: 0
+                        e.lastDateMs = dateMs; e.lastKm = lk.trim().toIntOrNull() ?: 0
+                        vm.saveMaintItem(e); editing = null
+                    }
+                }) { Text("Save") }
+            },
             dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+        )
+    }
+    val df = doneFor
+    if (df != null) {
+        var date by remember(df.id) { mutableStateOf(Docs.formatDate(System.currentTimeMillis())) }
+        var km by remember(df.id) { mutableStateOf(if (vm.car.odometerKm > 0) vm.car.odometerKm.toString() else "") }
+        var cost by remember(df.id) { mutableStateOf("") }
+        var shop by remember(df.id) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { doneFor = null },
+            title = { Text("Done: ${df.name}") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Hint("The next due date and mileage are counted from this.")
+                    Field("Date (YYYY-MM-DD)", date, { date = it })
+                    Field("Mileage (km)", km, { km = it }, number = true)
+                    Field("Cost (optional)", cost, { cost = it }, number = true)
+                    Field("Workshop (optional)", shop, { shop = it })
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val ms = Docs.parseDate(date)
+                    if (ms == null) vm.say("Write the date like 2026-03-15")
+                    else { vm.markDone(df, ms, km.trim().toIntOrNull() ?: vm.car.odometerKm, cost.trim().toDoubleOrNull() ?: 0.0, shop.trim()); doneFor = null }
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { doneFor = null }) { Text("Cancel") } },
+        )
+    }
+    if (bulk) {
+        var date by remember { mutableStateOf(Docs.formatDate(System.currentTimeMillis())) }
+        var km by remember { mutableStateOf(if (vm.car.odometerKm > 0) vm.car.odometerKm.toString() else "") }
+        AlertDialog(
+            onDismissRequest = { bulk = false },
+            title = { Text("Set all not-recorded jobs") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Hint("Use the date and mileage of your last full service, or today if you are starting fresh. You can correct single items later with Edit.")
+                    Field("Date (YYYY-MM-DD)", date, { date = it })
+                    Field("Mileage (km)", km, { km = it }, number = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val ms = Docs.parseDate(date)
+                    if (ms == null) vm.say("Write the date like 2026-03-15")
+                    else { vm.setAllUnrecorded(ms, km.trim().toIntOrNull() ?: vm.car.odometerKm); bulk = false }
+                }) { Text("Set") }
+            },
+            dismissButton = { TextButton(onClick = { bulk = false }) { Text("Cancel") } },
         )
     }
 }
