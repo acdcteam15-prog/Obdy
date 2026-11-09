@@ -25,7 +25,7 @@ object Report {
 
     fun lines(
         car: Car, faults: List<Fault>, monitors: MonitorStatus?, freeze: FreezeFrame?, live: Map<String, String>,
-        battery: BatteryRecord?, symptoms: String, ai: String?, due: List<String>, voltage: Double?,
+        battery: BatteryRecord?, symptoms: String, ai: String?, due: List<String>, voltage: Double?, repairs: List<RepairRecord> = emptyList(),
     ): List<ReportLine> {
         val l = ArrayList<ReportLine>()
         val df = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
@@ -70,6 +70,10 @@ object Report {
         if (due.isNotEmpty()) {
             l.add(ReportLine(ReportLine.HEADING, "Service due or overdue"))
             for (d in due) l.add(ReportLine(ReportLine.BODY, "- $d"))
+        }
+        if (repairs.isNotEmpty()) {
+            l.add(ReportLine(ReportLine.HEADING, "Repair and service history"))
+            for (x in repairs.take(25)) l.add(ReportLine(ReportLine.SMALL, "    ${Docs.formatDate(x.timeMs)}  ${x.title} (${x.category})" + (if (x.km > 0) "  ${x.km} km" else "") + (if (x.workshop.isNotBlank()) "  at ${x.workshop}" else "") + (if (x.cost > 0) "  ${Calc.fmt(x.cost, 2)}" else "")))
         }
         if (!ai.isNullOrBlank()) {
             l.add(ReportLine(ReportLine.HEADING, "AI analysis (a guide, not a verdict)"))

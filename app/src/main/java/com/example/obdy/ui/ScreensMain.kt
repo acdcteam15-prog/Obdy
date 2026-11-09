@@ -95,6 +95,13 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                 "parts" -> PartsScreen(vm)
                 "guided" -> GuidedScreen(vm)
                 "online" -> OnlineScreen(vm)
+                "doctor" -> DoctorScreen(vm)
+                "inspection" -> InspectionScreen(vm)
+                "health" -> HealthScreen(vm)
+                "tests" -> TestsScreen(vm)
+                "expenses" -> ExpensesScreen(vm)
+                "chat" -> ChatScreen(vm)
+                "dash" -> DashScreen(vm)
                 else -> vm.overlay = null
             }
         } else {
@@ -151,7 +158,7 @@ fun HomeScreen(vm: ObdyVm) {
                 if (vm.car.vin.isNotBlank()) Label("VIN: ${vm.car.vin}")
                 Label("${vm.supported.size} live values available", color = Brand.TextSecondary, size = 13)
                 Spacer(Modifier.height(4.dp))
-                SoftButton("Disconnect") { vm.disconnect() }
+                SoftButton("Disconnect") { vm.userDisconnect() }
             } else {
                 Spacer(Modifier.height(4.dp))
                 GradientButton(if (vm.conn == Conn.Connecting) "Connecting..." else "Connect to the car", Brand.AltBrush, enabled = vm.conn != Conn.Connecting) { vm.overlay = "connect" }
@@ -164,6 +171,10 @@ fun HomeScreen(vm: ObdyVm) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GradientButton("Scan codes", Brand.MainBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(false); vm.tab = 2 }
             GradientButton("Deep scan: all modules", Brand.AltBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true); vm.tab = 2 }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SoftButton("Ask the AI", Modifier.weight(1f)) { vm.overlay = "chat" }
+            SoftButton("Dashboard", Modifier.weight(1f)) { vm.overlay = "dash" }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SoftButton("Live data", Modifier.weight(1f)) { vm.tab = 1 }
@@ -388,6 +399,13 @@ fun ToolCard(title: String, desc: String, onClick: () -> Unit) {
 @Composable
 fun ToolsScreen(vm: ObdyVm) {
     ScreenFrame("Tools", null) {
+        ToolCard("Ask about your car (chat)", "Chat with the AI about your car's data. Add a photo of a warning light or a part, or ask by voice.") { vm.overlay = "chat" }
+        ToolCard("Health check and trends", "25 seconds at idle: judges idle, fuel trims, oxygen sensor, charging, air flow and vacuum. Graphs show if something drifts over weeks.") { vm.overlay = "health" }
+        ToolCard("Engine self-tests", "Misfire counters per cylinder, catalyst, oxygen sensor and EVAP results the car measures itself. Early warnings before a code.") { vm.overlay = "tests" }
+        ToolCard("Inspection check", "Is the car ready for the registration test? Warning light, codes and readiness monitors, with what to drive to finish them.") { vm.overlay = "inspection" }
+        ToolCard("Repairs and costs", "Log what was replaced, what it cost, with a receipt photo. The AI uses it so it does not suggest the same part again.") { vm.overlay = "expenses" }
+        ToolCard("Dashboard mode", "Big landscape gauges for speed, rpm, coolant, battery and fuel use. Keeps the screen on.") { vm.overlay = "dash" }
+        ToolCard("Adapter doctor", "Tests the adapter: identity, voltage, speed, protocol. Run it when the adapter arrives.") { vm.overlay = "doctor" }
         ToolCard("Battery and charging test", "Resting voltage, the dip while starting, and what the alternator delivers. Weak batteries cause many strange warning lights.") { vm.overlay = "battery" }
         ToolCard("Fuel and trips", "Start a trip on the Live screen: litres per 100 km, cost, and a saved history.") { vm.overlay = "trips" }
         ToolCard("Recordings and graphs", "Record a drive, look at the graphs, compare two drives (for example before and after a repair).") { vm.overlay = "records" }
@@ -457,10 +475,12 @@ fun CarScreen(vm: ObdyVm) {
                 }
             }
         }
+        DocsPanel(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SoftButton("Repairs and costs", Modifier.weight(1f)) { vm.overlay = "expenses" }
             SoftButton("PDF report", Modifier.weight(1f)) { vm.makeReport() }
-            SoftButton("Settings", Modifier.weight(1f)) { vm.overlay = "settings" }
         }
+        SoftButton("Settings", Modifier.fillMaxWidth()) { vm.overlay = "settings" }
     }
     val e = editing
     if (e != null) {

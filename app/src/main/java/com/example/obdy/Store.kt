@@ -37,6 +37,9 @@ class Store(private val ctx: Context) {
     var lastAddress: String get() = prefs.getString("lastAddr", "") ?: ""; set(v) { prefs.edit().putString("lastAddr", v).apply() }
     var autoConnect: Boolean get() = prefs.getBoolean("autoConnect", false); set(v) { prefs.edit().putBoolean("autoConnect", v).apply() }
     var keepScreenOn: Boolean get() = prefs.getBoolean("keepOn", true); set(v) { prefs.edit().putBoolean("keepOn", v).apply() }
+    var fastMode: Boolean get() = prefs.getBoolean("fast", true); set(v) { prefs.edit().putBoolean("fast", v).apply() }
+    var autoReconnect: Boolean get() = prefs.getBoolean("reconnect", true); set(v) { prefs.edit().putBoolean("reconnect", v).apply() }
+    var recordRoute: Boolean get() = prefs.getBoolean("route", false); set(v) { prefs.edit().putBoolean("route", v).apply() }
     var symptoms: String get() = prefs.getString("symptoms", "") ?: ""; set(v) { prefs.edit().putString("symptoms", v).apply() }
     var livePids: List<Int>
         get() = (prefs.getString("livePids", null) ?: Pids.defaultLive.joinToString(",")).split(",").mapNotNull { it.trim().toIntOrNull() }
@@ -155,6 +158,92 @@ class Store(private val ctx: Context) {
     fun addAi(r: AiRecord) {
         val all = (listOf(r) + loadAi()).take(30)
         writeJson("ai.json", JSONArray().also { a -> all.forEach { a.put(JSONObject().put("t", it.timeMs).put("title", it.title).put("text", it.text)) } })
+    }
+
+
+    // ---- repairs and expenses
+    fun loadRepairs(): List<RepairRecord> = readJson("repairs.json").mapObjects { o ->
+        RepairRecord(o.getString("id"), o.getLong("t"), o.optString("title"), o.optString("cat", "Other"), o.optDouble("cost", 0.0), o.optInt("km"), o.optString("shop"), o.optString("notes"), o.optString("receipt"))
+    }.sortedByDescending { it.timeMs }
+
+    fun saveRepairs(list: List<RepairRecord>) {
+        writeJson("repairs.json", JSONArray().also { a -> list.forEach { a.put(JSONObject().put("id", it.id).put("t", it.timeMs).put("title", it.title).put("cat", it.category).put("cost", it.cost).put("km", it.km).put("shop", it.workshop).put("notes", it.notes).put("receipt", it.receipt)) } })
+    }
+
+    fun receiptsDir(): File = File(ctx.filesDir, "receipts").also { it.mkdirs() }
+    fun routesDir(): File = File(ctx.filesDir, "routes").also { it.mkdirs() }
+
+    // ---- registration / insurance dates
+    fun loadDocs(): List<DocReminder> {
+        val saved = readJson("docs.json").mapObjects { DocReminder(it.getString("id"), it.getString("name"), it.getLong("due")) }
+        return if (saved.isEmpty()) Docs.defaults() else saved
+    }
+
+    fun saveDocs(list: List<DocReminder>) {
+        writeJson("docs.json", JSONArray().also { a -> list.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("due", it.dueMs)) } })
+    }
+
+    // ---- health check history (for the trend graphs)
+    fun loadHealth(): List<HealthRecord> = readJson("health.json").mapObjects { o ->
+        val v = o.getJSONObject("v"); val m = LinkedHashMap<String, Double>()
+        for (k in v.keys()) m[k] = v.getDouble(k)
+        HealthRecord(o.getLong("t"), m)
+    }
+
+    fun addHealth(r: HealthRecord) {
+        val all = (loadHealth() + r).sortedBy { it.timeMs }.takeLast(120)
+        writeJson("health.json", JSONArray().also { a -> all.forEach { h -> a.put(JSONObject().put("t", h.timeMs).put("v", JSONObject().also { o -> h.values.forEach { (k, v) -> o.put(k, v) } })) } })
+    }
+
+    // ---- backup: everything except recordings, in one text file
+    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "providers.json")
+
+    fun exportAll(includeKeys: Boolean): String {
+        val root = JSONObject().put("app", "obdy").put("version", 1)
+        val files = JSONObject()
+        for (n in backupFiles) {
+            val f = file(n)
+            if (!f.exists()) continue
+            var text = f.readText()
+            if (n == "providers.json" && !includeKeys) {
+                val arr = JSONArray(text)
+                for (i in 0 until arr.length()) arr.getJSONObject(i).put("key", "")
+                text = arr.toString()
+            }
+            files.put(n, text)
+        }
+        root.put("files", files)
+        root.put("prefs", JSONObject().put("theme", themeKey).put("livePids", livePids.joinToString(",")).put("symptoms", symptoms).put("wifiHost", wifiHost).put("wifiPort", wifiPort).put("ignored", loadIgnored().joinToString(",")))
+        return root.toString()
+    }
+
+    /** Returns how many parts were restored, or -1 if the text is not an Obdy backup. */
+    fun importAll(text: String): Int {
+        val root = try { JSONObject(text) } catch (e: Exception) { return -1 }
+        if (root.optString("app") != "obdy") return -1
+        var n = 0
+        val files = root.optJSONObject("files")
+        if (files != null) for (name in backupFiles) {
+            if (!files.has(name)) continue
+            if (name == "providers.json") {
+                // keep the keys that are already on this phone when the backup has none
+                val old = loadProviders().associateBy { it.id }
+                val arr = JSONArray(files.getString(name))
+                for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); if (o.optString("key").isBlank()) old[o.optString("id")]?.let { o.put("key", it.key) } }
+                file(name).writeText(arr.toString())
+            } else file(name).writeText(files.getString(name))
+            n++
+        }
+        root.optJSONObject("prefs")?.let { p ->
+            if (p.has("theme")) themeKey = p.getString("theme")
+            if (p.has("livePids")) prefs.edit().putString("livePids", p.getString("livePids")).apply()
+            if (p.has("symptoms")) symptoms = p.getString("symptoms")
+            if (p.has("wifiHost")) wifiHost = p.getString("wifiHost")
+            if (p.has("wifiPort")) wifiPort = p.getInt("wifiPort")
+            if (p.has("ignored")) saveIgnored(p.getString("ignored").split(",").filter { it.isNotBlank() }.toSet())
+            n++
+        }
+        return n
     }
 
     // ---- recordings (CSV files)

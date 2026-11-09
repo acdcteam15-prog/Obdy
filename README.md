@@ -29,6 +29,17 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **My car**: profile (VIN, mileage, tank, notes) and **service reminders** (oil, filters, brakes, fluids, plugs, battery, A/C...) with a notification when overdue.
 - **PDF report** to show a mechanic.
 - **Console**: send raw commands and share the full log (this is how to send me what your car answers).
+- **Adapter doctor**: tests the adapter (identity, protocol, voltage, speed, multi-value support). Run it the day the adapter arrives.
+- **Fast mode and auto-reconnect**: reads up to 4 values per request (switches itself off if the adapter cannot), and reconnects up to 4 times if the link drops.
+- **Engine self-tests (Mode 06)**: misfire counters per cylinder, catalyst, oxygen sensor and EVAP results the car measures itself.
+- **Inspection check**: warning light, codes and readiness monitors, with what to drive to finish missing monitors.
+- **Health check and trends**: 25 seconds at idle judged by simple rules; averages are kept and graphed, with drift warnings (for example falling charging voltage).
+- **Repairs and costs**: log with category, cost, mileage, workshop and a receipt photo; totals by category; included in the PDF and given to the AI.
+- **Registration and insurance dates** with reminders.
+- **Backup and restore** (one file, AI keys optional).
+- **Ask about your car (chat)**: the AI sees your data; attach a photo or ask by voice.
+- **Dashboard mode**: big landscape gauges.
+- **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: Settings > Updates.
 
 ## Get the adapter

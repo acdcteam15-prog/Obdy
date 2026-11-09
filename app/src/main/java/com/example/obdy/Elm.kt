@@ -204,6 +204,75 @@ class ElmClient(private val transport: Transport) {
         }
     }
 
+
+    /** Several live values in one request (faster). Null when the car does not answer that way. */
+    suspend fun readPids(pids: List<Pid>): Map<Int, Double>? {
+        if (pids.isEmpty()) return emptyMap()
+        val r = query("01" + pids.joinToString("") { "%02X".format(it.id) }, 2000)
+        val f = r.frames.firstOrNull { it.header == "7E8" && it.u(0) == 0x41 } ?: r.frames.firstOrNull { it.u(0) == 0x41 } ?: return null
+        return Pids.parseMulti(f.data)
+    }
+
+    /** Mode 06: the car's own self-test results (misfire counters per cylinder, catalyst, oxygen sensors, EVAP). */
+    suspend fun readMode06(onProgress: (String) -> Unit): List<TestResult> {
+        val mids = ArrayList<Int>()
+        var base = 0
+        while (base <= 0xE0) {
+            val f = query("06%02X".format(base), 3000).frames.firstOrNull { it.u(0) == 0x46 && it.u(1) == base } ?: break
+            val set = Mode06.supported(f)
+            mids.addAll(set.filter { it % 0x20 != 0 })
+            if ((base + 0x20) !in set) break
+            base += 0x20
+        }
+        val out = ArrayList<TestResult>()
+        for ((i, mid) in mids.take(40).withIndex()) {
+            onProgress("Reading test ${i + 1} of ${minOf(mids.size, 40)}")
+            val r = query("06%02X".format(mid), 2500)
+            for (f in r.frames) if (f.u(0) == 0x46 && f.u(1) == mid) out.addAll(Mode06.parse(f))
+        }
+        return out
+    }
+
+    /** Checks the adapter itself: identity, protocol, voltage, speed and whether it can ask for several values at once. */
+    suspend fun doctor(supportedCount: Int): List<Verdict> {
+        val out = ArrayList<Verdict>()
+        fun clean(s: String) = s.replace(">", "").replace('\r', ' ').trim().replace(Regex("\\s+"), " ")
+        val ati = clean(raw("ATI", 2000))
+        val desc = clean(raw("AT@1", 2000))
+        val sti = clean(raw("STI", 2000))
+        val dpn = clean(raw("ATDPN", 2000))
+        out.add(Verdict("Adapter says", ati.ifBlank { "no answer" }, Level.Info, "Identity: " + desc.ifBlank { "-" } + ". Newer adapters pretend to be an ELM327; what matters is the tests below."))
+        out.add(if (sti.uppercase().contains("STN") || sti.uppercase().contains("VLINKER") || sti.uppercase().contains("OBDLINK")) Verdict("Extended command set", sti.take(40), Level.Good, "The adapter has the enhanced STN-style commands.") else Verdict("Extended command set", "not found", Level.Info, "A plain ELM327-style adapter. That is enough for everything Obdy does now."))
+        out.add(Verdict("Protocol", dpn.ifBlank { "?" }, if (dpn.contains("6")) Level.Good else Level.Warn, "Your Malibu normally uses protocol 6 (ISO 15765-4 CAN, 500 kbit). Another protocol means the adapter chose differently."))
+        val v = voltage()
+        out.add(when {
+            v == null -> Verdict("Battery voltage", "no reading", Level.Warn, "The adapter did not report the voltage (ATRV).")
+            v < 11.5 -> Verdict("Battery voltage", Calc.fmt(v, 1) + " V", Level.Bad, "Low: the adapter may misbehave and the car may give false codes.")
+            else -> Verdict("Battery voltage", Calc.fmt(v, 1) + " V", Level.Good, "Fine.")
+        })
+        val times = ArrayList<Double>()
+        var failed = 0
+        for (i in 0 until 8) {
+            val t0 = System.nanoTime()
+            val r = query("0100", 2500)
+            times.add((System.nanoTime() - t0) / 1e6)
+            if (!r.ok) failed++
+        }
+        val avg = times.average()
+        out.add(when {
+            failed > 0 -> Verdict("Answers from the car", "${8 - failed} of 8", Level.Bad, "Some requests got no answer: loose adapter, ignition off, or a poor adapter.")
+            avg <= 90 -> Verdict("Speed", Calc.fmt(avg, 0) + " ms per request", Level.Good, "Fast: live data will refresh quickly.")
+            avg <= 220 -> Verdict("Speed", Calc.fmt(avg, 0) + " ms per request", Level.Warn, "Usable. Fast mode (several values per request) helps.")
+            else -> Verdict("Speed", Calc.fmt(avg, 0) + " ms per request", Level.Bad, "Slow link. Try another connection type, or move the phone closer.")
+        })
+        val multi = query("010C0D05", 2500)
+        val f = multi.frames.firstOrNull { it.u(0) == 0x41 }
+        val got = if (f != null) Pids.parseMulti(f.data).size else 0
+        out.add(if (got >= 3) Verdict("Several values per request", "works", Level.Good, "Fast mode can read 4 values in one request.") else Verdict("Several values per request", "no", Level.Info, "Obdy will read one value at a time (slower but fine)."))
+        out.add(Verdict("Live values available", "$supportedCount", if (supportedCount >= 15) Level.Good else if (supportedCount > 0) Level.Info else Level.Warn, "How many standard values the engine computer reports."))
+        return out
+    }
+
     // ---------------------------------------------------------------- console
     /** Sends anything the user types. [header] (3 hex digits) is optional; it is restored afterwards. */
     suspend fun console(header: String?, cmd: String): String {

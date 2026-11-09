@@ -8,6 +8,9 @@ import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -29,8 +32,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 
 enum class Conn { Off, Connecting, On }
 
@@ -85,6 +90,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     fun saveWifi(h: String, p: String) { wifiHost = h.trim(); wifiPort = p.trim(); store.wifiHost = h; store.wifiPort = p.trim().toIntOrNull() ?: 35000 }
     var autoConnect by mutableStateOf(store.autoConnect)
     fun changeAutoConnect(v: Boolean) { autoConnect = v; store.autoConnect = v }
+    var fastMode by mutableStateOf(store.fastMode)
+    fun changeFast(v: Boolean) { fastMode = v; store.fastMode = v; fastBroken = false; fastFails = 0 }
+    var autoReconnect by mutableStateOf(store.autoReconnect)
+    fun changeReconnect(v: Boolean) { autoReconnect = v; store.autoReconnect = v }
+    var recordRoute by mutableStateOf(store.recordRoute)
+    fun changeRoute(v: Boolean) { recordRoute = v; store.recordRoute = v; if (v && !RouteRecorder(ctx).hasPermission()) askLocation?.invoke() }
+    var askLocation: (() -> Unit)? = null
     var keepScreenOn by mutableStateOf(store.keepScreenOn)
     fun changeKeepScreen(v: Boolean) { keepScreenOn = v; store.keepScreenOn = v }
 
@@ -114,11 +126,18 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         } ?: emptyList()
     } catch (e: SecurityException) { emptyList() }
 
-    fun connectClassic(d: BluetoothDevice) = connect(ClassicTransport(d), "classic", d.address)
-    fun connectBle(d: BluetoothDevice) = connect(BleTransport(ctx, d), "ble", d.address)
+    private var lastReconnect: (() -> Unit)? = null
+    private var reconnectEnabled = false
+    private var reconnectJob: Job? = null
+    var reconnecting by mutableStateOf(false)
+    private var fastBroken = false
+    private var fastFails = 0
+
+    fun connectClassic(d: BluetoothDevice) { lastReconnect = { connectClassic(d) }; connect(ClassicTransport(d), "classic", d.address) }
+    fun connectBle(d: BluetoothDevice) { lastReconnect = { connectBle(d) }; connect(BleTransport(ctx, d), "ble", d.address) }
     fun usbDrivers(): List<UsbSerialDriver> = UsbHost.list(ctx)
-    fun connectUsb(d: UsbSerialDriver) = connect(UsbTransport(ctx, d), "usb", "")
-    fun connectWifi() = connect(WifiTransport(ctx, wifiHost, wifiPort.toIntOrNull() ?: 35000), "wifi", "")
+    fun connectUsb(d: UsbSerialDriver) { lastReconnect = { connectUsb(d) }; connect(UsbTransport(ctx, d), "usb", "") }
+    fun connectWifi() { lastReconnect = { connectWifi() }; connect(WifiTransport(ctx, wifiHost, wifiPort.toIntOrNull() ?: 35000), "wifi", "") }
 
     @Suppress("DEPRECATION")
     fun autoConnectNow() {
@@ -139,6 +158,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun connect(t: Transport, kind: String, address: String) {
         if (conn == Conn.Connecting) return
         disconnect()
+        reconnectEnabled = true
         conn = Conn.Connecting
         connStatus = "Connecting to ${t.label}..."
         connectJob = viewModelScope.launch {
@@ -148,7 +168,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 connStatus = "Adapter found. Talking to the car..."
                 val info = c.exclusive { initialize() }
                 client = c; adapter = info; voltage = info.voltage
-                dead.clear()
+                dead.clear(); fastFails = 0; fastBroken = false
                 supported = c.exclusive { supportedPids() }
                 val vin = c.exclusive { readVin() }
                 if (vin != null && vin != car.vin) {
@@ -196,6 +216,28 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         disconnect()
         connStatus = msg
         say("Connection to the adapter was lost.")
+        if (autoReconnect && reconnectEnabled && lastReconnect != null) startReconnect()
+    }
+
+    /** The Disconnect button: stops everything and does not try again by itself. */
+    fun userDisconnect() { reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; disconnect() }
+
+    private fun startReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            reconnecting = true
+            try {
+                for (i in 1..4) {
+                    delay(3000)
+                    if (conn != Conn.Off || !reconnectEnabled) return@launch
+                    connStatus = "Connection lost. Reconnecting ($i of 4)..."
+                    lastReconnect?.invoke()
+                    while (conn == Conn.Connecting) delay(300)
+                    if (conn == Conn.On) { say("Reconnected."); return@launch }
+                }
+                connStatus = "Connection lost. Could not reconnect."
+            } finally { reconnecting = false }
+        }
     }
 
     private suspend fun <T> withCar(block: suspend ElmClient.() -> T): T? {
@@ -239,11 +281,22 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 while (currentCoroutineContext().isActive) {
                     val ids = pollIds()
                     if (ids.isEmpty()) { delay(400); continue }
-                    for (id in ids) {
-                        val p = Pids.byId(id) ?: continue
+                    suspend fun single(p: Pid) {
                         val v = c.exclusive { readPid(p) }
-                        if (v != null) { liveValues[id] = v; dead[id] = 0 } else dead[id] = (dead[id] ?: 0) + 1
+                        if (v != null) { liveValues[p.id] = v; dead[p.id] = 0 } else dead[p.id] = (dead[p.id] ?: 0) + 1
                     }
+                    val pids = ids.mapNotNull { Pids.byId(it) }
+                    if (fastMode && !fastBroken && pids.size > 1) {
+                        for (chunk in pids.chunked(4)) {
+                            val m = if (chunk.size > 1) c.exclusive { readPids(chunk) } else null
+                            if (m != null && m.size == chunk.size) {
+                                for ((id, value) in m) { liveValues[id] = value; dead[id] = 0 }
+                            } else {
+                                if (chunk.size > 1) { fastFails++; if (fastFails >= 3) { fastBroken = true; say("This adapter does not support fast mode. Reading one value at a time.") } }
+                                for (p in chunk) single(p)
+                            }
+                        }
+                    } else for (p in pids) single(p)
                     if (showExt && cycle % 4 == 0) {
                         for (e in Gm.extPids) {
                             if ((dead[-e.name.hashCode()] ?: 0) >= 3) continue
@@ -274,11 +327,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun pollIds(): List<Int> {
         val want = ArrayList<Int>(liveSel)
         if (tripAcc != null) want.addAll(listOf(0x0D, 0x10, 0x44, 0x5E))
+        if (liveReasons.contains("dash")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
         return want.distinct().filter { (supported.isEmpty() || it in supported) && (dead[it] ?: 0) < 3 }
     }
 
     // ---- trip and fuel
     private var tripAcc: TripAcc? = null
+    private var route: RouteRecorder? = null
     private var tripStartMs = 0L
     var tripOn by mutableStateOf(false)
     var tripKm by mutableStateOf(0.0)
@@ -293,6 +348,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     fun startTrip() {
         if (conn != Conn.On) { say("Connect to the car first."); return }
         tripAcc = TripAcc(); tripStartMs = System.currentTimeMillis(); tripOn = true
+        route = null
+        if (recordRoute) {
+            val r = RouteRecorder(ctx)
+            if (r.start()) route = r else { say("Route not recorded: location permission needed."); askLocation?.invoke() }
+        }
         tripKm = 0.0; tripLiters = 0.0; tripSeconds = 0.0; tripMaxKmh = 0.0; tripL100 = null
         wantLive("trip", true)
     }
@@ -302,6 +362,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun finishTrip() {
         val a = tripAcc ?: return
         tripAcc = null; tripOn = false
+        route?.let { r ->
+            r.stop()
+            if (r.points.size >= 2 && a.km >= 0.05) {
+                try { File(store.routesDir(), "trip_$tripStartMs.gpx").writeText(Gpx.build("Obdy trip " + java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.US).format(java.util.Date(tripStartMs)), r.points)) } catch (_: Exception) {}
+            }
+        }
+        route = null
         if (a.km >= 0.05) {
             store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh))
             trips = store.loadTrips()
@@ -310,7 +377,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteTrip(t: TripRecord) { store.deleteTrip(t.startMs); trips = store.loadTrips() }
+    fun deleteTrip(t: TripRecord) { store.deleteTrip(t.startMs); routeFile(t)?.delete(); trips = store.loadTrips() }
+    fun routeFile(t: TripRecord): File? = File(store.routesDir(), "trip_${t.startMs}.gpx").takeIf { it.exists() }
 
     private fun tripTick(dt: Double) {
         val a = tripAcc ?: return
@@ -372,6 +440,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         ctx.startActivity(Intent.createChooser(i, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
+    fun openImage(path: String) {
+        try {
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", File(path))
+            ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/jpeg").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) { say("Could not open the photo.") }
+    }
+
     fun shareText(text: String) {
         val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
         ctx.startActivity(Intent.createChooser(i, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -404,6 +479,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 scanProgress = "Reading freeze frame..."
                 val fr = withCar { readFreezeFrame() }
                 voltage = withCar { voltage() } ?: voltage
+                warmups = if (0x30 in supported) withCar { readPid(Pids.byId(0x30)!!) }?.toInt() else null
+                distClear = if (0x31 in supported) withCar { readPid(Pids.byId(0x31)!!) }?.toInt() else null
                 if (deep) {
                     foundModules = withCar { findModules { i, n, name -> scanProgress = "Looking for modules ($i/$n): $name" } } ?: emptyList()
                     foundCount = foundModules.size
@@ -425,6 +502,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    var warmups by mutableStateOf<Int?>(null)
+    var distClear by mutableStateOf<Int?>(null)
+    fun inspection(): List<Verdict> = if (lastScanMs == 0L) Inspection.evaluate(null, emptyList(), null, null, null) else Inspection.evaluate(monitors?.milOn, faults, monitors, warmups, distClear)
 
     var clearing by mutableStateOf(false)
     fun clearCodes() {
@@ -504,11 +585,19 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     fun markDone(item: MaintItem) { item.lastKm = car.odometerKm; item.lastDateMs = System.currentTimeMillis(); saveMaint() }
     fun setInterval(item: MaintItem, km: Int, months: Int) { item.everyKm = km; item.everyMonths = months; saveMaint() }
 
-    fun dueNames(): List<String> = dueList().filter { it.overdue || it.soon }.map { it.item.name }
+    fun dueNames(): List<String> = dueList().filter { it.overdue || it.soon }.map { it.item.name } + docNotices()
+
+    fun docNotices(): List<String> {
+        val now = System.currentTimeMillis()
+        return docs.filter { it.dueMs > 0 }.mapNotNull { d ->
+            val n = d.daysLeft(now)
+            if (n < 0) "${d.name} expired" else if (n <= 30) "${d.name} expires in $n days" else null
+        }
+    }
 
     fun checkServiceNotice() {
-        if (car.odometerKm <= 0) return
-        Notifier.serviceDue(ctx, dueList().filter { it.overdue }.map { it.item.name })
+        val now = System.currentTimeMillis()
+        Notifier.serviceDue(ctx, dueList().filter { it.overdue }.map { it.item.name } + docs.filter { it.dueMs > 0 && it.daysLeft(now) <= 14 }.map { if (it.daysLeft(now) < 0) "${it.name} expired" else "${it.name} in ${it.daysLeft(now)} days" })
     }
 
     // ------------------------------------------------------------------ AI analysis and report
@@ -524,10 +613,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         return m
     }
 
-    fun aiPrompt(focus: String?, extra: String = "", withFormat: Boolean = true): String = AiPrompt.build(
-        car, faults, monitors, freeze, liveSnapshot(), batHistory.firstOrNull(), symptoms,
-        dueList().filter { it.overdue }.map { it.item.name }, focus, extra, withFormat,
-    )
+    private fun repairHistory(): String = repairs.take(8).joinToString("\n") { "- ${Docs.formatDate(it.timeMs)}: ${it.title} (${it.category})" + (if (it.km > 0) " at ${it.km} km" else "") + (if (it.notes.isNotBlank()) ": ${it.notes.take(120)}" else "") }
+
+    fun aiPrompt(focus: String?, extra: String = "", withFormat: Boolean = true): String {
+        val rep = repairHistory()
+        val full = if (rep.isBlank()) extra else extra + "\nREPAIR AND SERVICE HISTORY (already done, do not suggest it again as the first step):\n" + rep
+        return AiPrompt.build(car, faults, monitors, freeze, liveSnapshot(), batHistory.firstOrNull(), symptoms, dueList().filter { it.overdue }.map { it.item.name }, focus, full, withFormat)
+    }
 
     fun runAi(focus: String?) {
         if (aiBusy) return
@@ -547,7 +639,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun makeReport() {
         viewModelScope.launch {
-            val lines = Report.lines(car, faults, monitors, freeze, liveSnapshot(), batHistory.firstOrNull(), symptoms, aiText, dueNames(), voltage)
+            val lines = Report.lines(car, faults, monitors, freeze, liveSnapshot(), batHistory.firstOrNull(), symptoms, aiText, dueNames(), voltage, repairs)
             val f = withContext(Dispatchers.IO) { Report.build(ctx, lines) }
             shareFile(f, "application/pdf")
         }
@@ -770,6 +862,184 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     fun restoreCode(code: String) { ignored = ignored - code.take(5); store.saveIgnored(ignored) }
+
+
+    // ------------------------------------------------------------------ adapter doctor
+    var doctorResult by mutableStateOf<List<Verdict>>(emptyList())
+    var doctorBusy by mutableStateOf(false)
+
+    fun runDoctor() {
+        if (doctorBusy) return
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        doctorBusy = true
+        viewModelScope.launch {
+            try { doctorResult = withCar { doctor(supported.size) } ?: emptyList() } finally { doctorBusy = false }
+        }
+    }
+
+    // ------------------------------------------------------------------ engine self-tests (Mode 06)
+    var tests by mutableStateOf<List<TestResult>>(emptyList())
+    var testsBusy by mutableStateOf(false)
+    var testsProgress by mutableStateOf("")
+    var testsRead by mutableStateOf(false)
+
+    fun readTests() {
+        if (testsBusy) return
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        testsBusy = true; testsProgress = "Asking which tests exist..."
+        viewModelScope.launch {
+            try { tests = withCar { readMode06 { p -> testsProgress = p } } ?: emptyList(); testsRead = true } finally { testsBusy = false; testsProgress = "" }
+        }
+    }
+
+    // ------------------------------------------------------------------ health check and trends
+    var healthBusy by mutableStateOf(false)
+    var healthProgress by mutableStateOf(0)
+    var healthResult by mutableStateOf<List<Verdict>>(emptyList())
+    var healthHistory by mutableStateOf(store.loadHealth())
+
+    /** 25 seconds of readings (engine warm and idling), judged by simple rules. The averages are kept for the trend graphs. */
+    fun runHealth() {
+        if (healthBusy) return
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        healthBusy = true; healthProgress = 0; healthResult = emptyList()
+        viewModelScope.launch {
+            try {
+                val ids = HealthCheck.pids.filter { supported.isEmpty() || it in supported }.mapNotNull { Pids.byId(it) }
+                val samples = HashMap<Int, MutableList<Double>>()
+                val start = System.currentTimeMillis()
+                while (System.currentTimeMillis() - start < 25_000) {
+                    for (chunk in ids.chunked(4)) {
+                        val m = if (fastMode && !fastBroken && chunk.size > 1) withCar { readPids(chunk) } else null
+                        if (m != null && m.size == chunk.size) { for ((id, value) in m) samples.getOrPut(id) { ArrayList() }.add(value) }
+                        else for (p in chunk) withCar { readPid(p) }?.let { samples.getOrPut(p.id) { ArrayList() }.add(it) }
+                        if (conn != Conn.On) return@launch
+                    }
+                    healthProgress = ((System.currentTimeMillis() - start) * 100 / 25_000).toInt().coerceAtMost(100)
+                }
+                healthResult = HealthCheck.evaluate(samples)
+                val sum = HealthCheck.summary(samples)
+                if (sum.isNotEmpty() && (samples[0x0C]?.average() ?: 0.0) > 400 && (sum["coolant"] ?: 0.0) >= 75) {
+                    store.addHealth(HealthRecord(System.currentTimeMillis(), sum)); healthHistory = store.loadHealth()
+                }
+            } finally { healthBusy = false }
+        }
+    }
+
+    // ------------------------------------------------------------------ repairs, expenses, documents
+    var repairs by mutableStateOf(store.loadRepairs())
+    var docs by mutableStateOf(store.loadDocs())
+    var pendingReceipt by mutableStateOf("")
+
+    fun newId(): String = UUID.randomUUID().toString()
+
+    fun saveRepair(r: RepairRecord) {
+        repairs = (repairs.filter { it.id != r.id } + r).sortedByDescending { it.timeMs }; store.saveRepairs(repairs)
+        if (r.km > car.odometerKm) updateCar(car.copy(odometerKm = r.km))
+        pendingReceipt = ""
+    }
+
+    fun deleteRepair(r: RepairRecord) {
+        if (r.receipt.isNotBlank()) try { File(r.receipt).delete() } catch (_: Exception) {}
+        repairs = repairs.filter { it.id != r.id }; store.saveRepairs(repairs)
+    }
+
+    fun saveDoc(id: String, dateText: String): Boolean {
+        val ms = Docs.parseDate(dateText) ?: return false
+        docs = docs.map { if (it.id == id) DocReminder(id, it.name, ms) else it }; store.saveDocs(docs); return true
+    }
+
+    // ------------------------------------------------------------------ pickers (photo, backup file, voice)
+    var launchPicker: ((String) -> Unit)? = null
+    var launchVoice: (() -> Unit)? = null
+    private var pickerPurpose = ""
+
+    fun pick(purpose: String, mime: String) {
+        pickerPurpose = purpose
+        val l = launchPicker
+        if (l == null) say("The file picker is not available.") else l(mime)
+    }
+
+    private fun loadJpeg(uri: Uri, maxSide: Int): ByteArray? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide * 2) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        if (bmp == null) null else {
+            val big = maxOf(bmp.width, bmp.height)
+            val scaled = if (big > maxSide) { val f = maxSide.toFloat() / big; Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true) } else bmp
+            val bos = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos); bos.toByteArray()
+        }
+    } catch (e: Exception) { null }
+
+    fun pickerResult(uri: Uri?) {
+        if (uri == null) return
+        when (pickerPurpose) {
+            "receipt" -> {
+                val b = loadJpeg(uri, 1600)
+                if (b == null) say("Could not read that photo.") else {
+                    val f = File(store.receiptsDir(), "r_${System.currentTimeMillis()}.jpg"); f.writeBytes(b); pendingReceipt = f.absolutePath; say("Photo attached")
+                }
+            }
+            "chat" -> {
+                val b = loadJpeg(uri, 1280)
+                if (b == null) say("Could not read that photo.") else { chatImage = b; say("Photo attached to your question") }
+            }
+            "restore" -> {
+                val text = try { ctx.contentResolver.openInputStream(uri)?.use { String(it.readBytes(), Charsets.UTF_8) } } catch (e: Exception) { null }
+                val n = if (text == null) -1 else store.importAll(text)
+                if (n < 0) say("That file is not an Obdy backup.") else { reloadAll(); say("Restored $n parts.") }
+            }
+        }
+    }
+
+    fun voiceResult(text: String) { chatDraft = text }
+
+    private fun reloadAll() {
+        car = store.loadCar(); symptoms = store.symptoms; trips = store.loadTrips(); scanHistory = store.loadScans(); batHistory = store.loadBattery()
+        maint = store.loadMaintenance(); aiHistory = store.loadAi(); repairs = store.loadRepairs(); docs = store.loadDocs(); healthHistory = store.loadHealth()
+        providers = store.loadProviders(); ignored = store.loadIgnored(); liveSel = store.livePids; applyTheme(store.themeKey)
+        wifiHost = store.wifiHost; wifiPort = store.wifiPort.toString()
+    }
+
+    // ------------------------------------------------------------------ backup
+    fun exportBackup(includeKeys: Boolean) {
+        val dir = File(ctx.filesDir, "backups").also { it.mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val f = File(dir, "obdy-backup-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date()) + ".json")
+        f.writeText(store.exportAll(includeKeys))
+        shareFile(f, "application/json")
+    }
+
+    // ------------------------------------------------------------------ chat with the car's data
+    class ChatMsg(val fromUser: Boolean, val text: String, val hasImage: Boolean)
+    val chat = mutableStateListOf<ChatMsg>()
+    var chatBusy by mutableStateOf(false)
+    var chatImage by mutableStateOf<ByteArray?>(null)
+    var chatError by mutableStateOf<String?>(null)
+    var chatDraft by mutableStateOf("")
+
+    fun chatSend(text: String) {
+        val q = text.trim()
+        if (q.isEmpty() || chatBusy) return
+        val p = activeProvider
+        if (p == null) { chatError = "Add an AI service in Settings first."; return }
+        val img = chatImage
+        chat.add(ChatMsg(true, q, img != null))
+        chatImage = null; chatDraft = ""; chatError = null; chatBusy = true
+        val history = chat.dropLast(1).takeLast(8).joinToString("\n") { (if (it.fromUser) "Owner: " else "Assistant: ") + it.text }
+        val prompt = aiPrompt(null,
+            "You are chatting with the owner about this car. Use the data above. Answer the latest question directly and briefly (under 180 words unless more is needed). " +
+            "If a photo is attached, say what you see that matters for the car (warning light meaning, part, leak, tyre damage) and what to do. If something could be dangerous, say so first.\n" +
+            (if (history.isNotBlank()) "CONVERSATION SO FAR:\n$history\n" else "") + "LATEST OWNER QUESTION: $q", withFormat = false)
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
+            if (r.text != null) chat.add(ChatMsg(false, r.text.replace("**", "").replace("##", ""), false)) else chatError = r.error
+            chatBusy = false
+        }
+    }
 
     override fun onCleared() { disconnect(); super.onCleared() }
 }

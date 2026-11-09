@@ -163,3 +163,69 @@ class PartsTest {
         assertTrue(some.none { it.startsWith(causes[0].take(40)) })
     }
 }
+
+class ExtrasTest {
+    @Test fun multiPid() {
+        val m = Pids.parseMulti(byteArrayOf(0x41, 0x0C, 0x1A, 0xF8.toByte(), 0x0D, 0x3C, 0x05, 0x7B, 0x00, 0x00))
+        assertEquals(3, m.size)
+        assertEquals(1726.0, m[0x0C]!!, 0.001); assertEquals(60.0, m[0x0D]!!, 0.001); assertEquals(83.0, m[0x05]!!, 0.001)
+        assertEquals(1, Pids.parseMulti(byteArrayOf(0x41, 0x0C, 0x1A, 0xF8.toByte(), 0x0D)).size)
+    }
+
+    @Test fun mode06() {
+        val f = Frame("7E8", byteArrayOf(0x46, 0xA2.toByte(), 0x0B, 0x24, 0x00, 0x02, 0x00, 0x00, 0x00, 0x14, 0x0C, 0x24, 0x00, 0x30, 0x00, 0x00, 0x00, 0x14))
+        val r = Mode06.parse(f)
+        assertEquals(2, r.size)
+        assertEquals("Misfire, cylinder 1", r[0].name)
+        assertTrue(r[0].pass); assertFalse(r[1].pass)
+        assertEquals(48, r[1].value)
+        val sup = Mode06.supported(Frame("7E8", byteArrayOf(0x46, 0x00, 0x80.toByte(), 0x00, 0x00, 0x01)))
+        assertTrue(1 in sup); assertTrue(0x20 in sup); assertFalse(2 in sup)
+    }
+
+    @Test fun inspection() {
+        val mon = Readiness.decode(byteArrayOf(0x00, 0x07, 0xE5.toByte(), 0x04))
+        val v = Inspection.evaluate(false, emptyList(), mon, 12, 40)
+        assertEquals(Level.Good, v[0].level)
+        assertTrue(v.any { it.title == "Readiness monitors" && it.level == Level.Warn })
+        val bad = Inspection.evaluate(true, listOf(Fault("P0420", "Engine", "permanent")), mon, null, null)
+        assertEquals(Level.Bad, bad[0].level); assertEquals(Level.Bad, bad[1].level)
+        assertEquals(Level.Info, Inspection.evaluate(null, emptyList(), null, null, null)[0].level)
+    }
+
+    @Test fun healthCheck() {
+        val rpm = List(40) { 780.0 + (it % 3) }
+        val o2 = List(40) { if (it % 2 == 0) 0.2 else 0.7 }
+        val ok = HealthCheck.evaluate(mapOf(0x0C to rpm, 0x05 to List(40) { 90.0 }, 0x07 to List(40) { 1.5 }, 0x06 to List(40) { 0.0 }, 0x14 to o2, 0x42 to List(40) { 14.1 }, 0x10 to List(40) { 3.2 }, 0x0B to List(40) { 35.0 }))
+        assertEquals(Level.Good, HealthCheck.overall(ok))
+        val rough = HealthCheck.evaluate(mapOf(0x0C to List(40) { if (it % 2 == 0) 650.0 else 820.0 }, 0x07 to List(40) { 14.0 }))
+        assertEquals(Level.Bad, HealthCheck.overall(rough))
+        assertEquals(Level.Info, HealthCheck.evaluate(mapOf(0x0C to List(40) { 0.0 }))[0].level)
+        assertTrue(HealthCheck.crossings(o2) > 30)
+        assertEquals(0, HealthCheck.crossings(List(30) { 0.45 }))
+    }
+
+    @Test fun trends() {
+        val l = listOf(1, 2, 3, 4, 5, 6).map { HealthRecord(it * 1000L, mapOf("volt" to if (it < 5) 14.2 else 13.6, "ltft" to 1.0)) }
+        assertNotNull(Trends.drift(l, "volt"))
+        assertNull(Trends.drift(l, "ltft"))
+        assertNull(Trends.drift(l.take(3), "volt"))
+    }
+
+    @Test fun docsAndExpenses() {
+        val d = Docs.parseDate("2027-03-15")!!
+        assertEquals("2027-03-15", Docs.formatDate(d))
+        assertNull(Docs.parseDate("15/03/2027")); assertNull(Docs.parseDate("2027-13-01"))
+        assertEquals(10, DocReminder("x", "x", d).daysLeft(d - 10 * 86_400_000L))
+        val r = listOf(RepairRecord("1", 1, "Oil", "Service", 150.0, 1, "", "", ""), RepairRecord("2", 2, "Plugs", "Parts", 300.0, 1, "", "", ""), RepairRecord("3", 3, "Filter", "Service", 50.0, 1, "", "", ""))
+        assertEquals(500.0, Expenses.total(r), 0.001)
+        assertEquals("Parts", Expenses.byCategory(r)[0].first)
+    }
+
+    @Test fun gpx() {
+        val p = listOf(RoutePoint(24.4539, 54.3773, 0L, 10.0), RoutePoint(24.4639, 54.3773, 60_000L, 12.0))
+        val x = Gpx.build("A & B", p)
+        assertTrue(x.contains("<trkpt lat=\"24.453900\"")); assertTrue(x.contains("A &amp; B"))
+        assertEquals(1.11, Gpx.distanceKm(p), 0.05)
+    }
+}

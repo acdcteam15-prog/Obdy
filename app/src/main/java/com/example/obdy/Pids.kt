@@ -59,6 +59,19 @@ object Pids {
     /** The 10 values shown first on the Live screen. */
     val defaultLive = listOf(0x0C, 0x0D, 0x05, 0x04, 0x06, 0x07, 0x42, 0x10, 0x11, 0x0F)
 
+    /** Several values in one answer: 41 <pid> <data> <pid> <data> ... (data = the whole answer including the leading 41). */
+    fun parseMulti(data: ByteArray): Map<Int, Double> {
+        val out = LinkedHashMap<Int, Double>()
+        var i = 1
+        while (i < data.size) {
+            val pid = byId(data[i].toInt() and 0xFF) ?: break
+            if (i + 1 + pid.bytes > data.size) break
+            pid.value(data.copyOfRange(i + 1, i + 1 + pid.bytes))?.let { out[pid.id] = it }
+            i += 1 + pid.bytes
+        }
+        return out
+    }
+
     /** Reads the answer to PID 00/20/40/60..: 4 bytes where the highest bit of byte A means PID base+1. */
     fun supported(base: Int, d: ByteArray): Set<Int> {
         val out = HashSet<Int>()

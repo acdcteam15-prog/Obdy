@@ -165,6 +165,7 @@ fun SettingsScreen(vm: ObdyVm) {
             }
         }
         ProvidersPanel(vm)
+        ExtraSettingsPanels(vm)
         Panel {
             Title("Updates")
             Label("This build: ${BuildConfig.VERSION_LABEL}")
@@ -267,6 +268,8 @@ fun TripsScreen(vm: ObdyVm) {
                             Label(fmtDate(t.startMs), bold = true)
                             Label("${Calc.fmt(t.km, 1)} km  ·  ${Calc.fmt(t.liters, 2)} L  ·  " + (if (t.km >= 0.2) Calc.fmt(t.liters / t.km * 100, 1) + " L/100" else "-"), size = 13)
                             Hint("${(t.seconds / 60).toInt()} min  ·  top speed ${Calc.fmt(t.maxKmh, 0)} km/h")
+                            val rf = vm.routeFile(t)
+                            if (rf != null) SoftButton("Share route (GPX)") { vm.shareFile(rf, "application/gpx+xml") }
                         }
                         SoftButton("Delete") { vm.deleteTrip(t) }
                     }
