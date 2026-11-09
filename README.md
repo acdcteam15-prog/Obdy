@@ -43,6 +43,11 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: Settings > Updates.
 
+## Look and feel
+Simple Home (status card plus six icon tiles), an icon grid for Tools, a custom icon set drawn in code (no icon library), animated tab and screen
+transitions, press feedback on buttons and tiles, animated gauges and progress bars, expanding fault cards and a pulsing status dot while connecting.
+Five colour themes in Settings.
+
 ## Get the adapter
 | Adapter | How it connects | Notes |
 |---|---|---|

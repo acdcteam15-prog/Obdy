@@ -1,5 +1,7 @@
 package com.example.obdy.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,8 +58,9 @@ fun VerdictList(list: List<Verdict>) {
 
 @Composable
 fun ProgressBar(fraction: Float) {
+    val f by animateFloatAsState(targetValue = fraction.coerceIn(0f, 1f), animationSpec = tween(300), label = "progress")
     Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(Brand.Track)) {
-        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(8.dp).background(Brand.Accent))
+        Box(Modifier.fillMaxWidth(f).height(8.dp).background(Brand.MainBrush))
     }
 }
 

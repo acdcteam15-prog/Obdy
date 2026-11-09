@@ -101,6 +101,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)
+    implementation(libs.compose.animation)
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.usb.serial)

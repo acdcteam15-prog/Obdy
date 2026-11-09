@@ -1,6 +1,24 @@
 package com.example.obdy.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,10 +62,11 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .animateContentSize()
+            .clip(RoundedCornerShape(18.dp))
             .background(Brand.Card)
-            .border(1.dp, Brand.CardBorder, RoundedCornerShape(14.dp))
-            .padding(14.dp),
+            .border(1.dp, Brand.CardBorder, RoundedCornerShape(18.dp))
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         content = content,
     )
@@ -55,13 +74,17 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
 
 @Composable
 fun GradientButton(text: String, brush: Brush, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(targetValue = if (pressed) 0.97f else 1f, animationSpec = tween(90), label = "btn")
     Box(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .graphicsLayer { scaleX = sc; scaleY = sc }
+            .clip(RoundedCornerShape(16.dp))
             .background(if (enabled) brush else Brush.linearGradient(listOf(Brand.Track, Brand.Track)))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 12.dp),
+            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .padding(vertical = 15.dp, horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text, color = if (enabled) Color.White else Brand.TextSecondary, fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center)
@@ -70,15 +93,72 @@ fun GradientButton(text: String, brush: Brush, modifier: Modifier = Modifier, en
 
 @Composable
 fun SoftButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(targetValue = if (pressed) 0.96f else 1f, animationSpec = tween(90), label = "soft")
     Box(
         modifier
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, if (enabled) Brand.Accent.copy(alpha = 0.7f) else Brand.CardBorder, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .graphicsLayer { scaleX = sc; scaleY = sc }
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (pressed) Brand.Accent.copy(alpha = 0.12f) else Color.Transparent)
+            .border(1.dp, if (enabled) Brand.Accent.copy(alpha = 0.7f) else Brand.CardBorder, RoundedCornerShape(14.dp))
+            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
             .padding(vertical = 11.dp, horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text, color = if (enabled) Brand.Accent else Brand.TextSecondary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, textAlign = TextAlign.Center)
+    }
+}
+
+/** A square action tile with an icon: the main way to start things on Home and Tools. */
+@Composable
+fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier, accent: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(targetValue = if (pressed) 0.96f else 1f, animationSpec = tween(100), label = "tile")
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        modifier
+            .graphicsLayer { scaleX = sc; scaleY = sc; alpha = if (enabled) 1f else 0.45f }
+            .clip(shape)
+            .background(Brand.Card)
+            .border(1.dp, if (accent && enabled) Brand.Accent.copy(alpha = 0.6f) else Brand.CardBorder, shape)
+            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier.size(42.dp).clip(RoundedCornerShape(13.dp))
+                .background(if (accent) Brand.MainBrush else Brush.linearGradient(listOf(Brand.Accent.copy(alpha = 0.20f), Brand.Accent.copy(alpha = 0.08f)))),
+            contentAlignment = Alignment.Center,
+        ) { AppIcon(ic, size = 22.dp, color = if (accent) Color.White else Brand.Accent) }
+        Text(title, color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        if (sub.isNotEmpty()) Text(sub, color = Brand.TextSecondary, fontSize = 12.sp, maxLines = 2)
+    }
+}
+
+/** Fades and slides its content in when the screen opens. [index] staggers the items. */
+@Composable
+fun Reveal(index: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val state = remember { MutableTransitionState(false).apply { targetState = true } }
+    AnimatedVisibility(
+        visibleState = state, modifier = modifier,
+        enter = fadeIn(animationSpec = tween(300, delayMillis = index * 50)) +
+            slideInVertically(animationSpec = tween(300, delayMillis = index * 50)) { it / 6 },
+    ) { content() }
+}
+
+@Composable
+fun StatusDot(color: Color, pulsing: Boolean, size: Dp = 12.dp) {
+    val t = rememberInfiniteTransition(label = "pulse")
+    val a by t.animateFloat(initialValue = 1f, targetValue = if (pulsing) 0.25f else 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "pulseA")
+    Box(Modifier.size(size).graphicsLayer { alpha = a }.clip(CircleShape).background(color))
+}
+
+@Composable
+fun IconTap(ic: Ic, onClick: () -> Unit) {
+    Box(Modifier.size(46.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        AppIcon(ic, size = 24.dp, color = Brand.Accent)
     }
 }
 
@@ -124,8 +204,10 @@ fun Field(label: String, value: String, onChange: (String) -> Unit, number: Bool
 /** A round gauge: the arc fills with the value between [min] and [max]. */
 @Composable
 fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Double, modifier: Modifier = Modifier, decimals: Int = 0, hint: String = "") {
-    val frac = if (value == null || max <= min) 0.0 else ((value - min) / (max - min)).coerceIn(0.0, 1.0)
-    val arcColor = if (frac > 0.88) Brand.Red else Brand.Accent
+    val target = if (value == null || max <= min) 0.0 else ((value - min) / (max - min)).coerceIn(0.0, 1.0)
+    val animated by animateFloatAsState(targetValue = target.toFloat(), animationSpec = tween(450), label = "gauge")
+    val frac = animated.toDouble()
+    val arcColor = if (target > 0.88) Brand.Red else Brand.Accent
     val track = Brand.Track
     Column(
         modifier.clip(RoundedCornerShape(14.dp)).background(Brand.Card).border(1.dp, Brand.CardBorder, RoundedCornerShape(14.dp)).padding(10.dp),
