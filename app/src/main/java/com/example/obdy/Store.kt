@@ -18,7 +18,7 @@ data class Car(
 )
 
 class ScanRecord(val timeMs: Long, val odometerKm: Int, val milOn: Boolean?, val faults: List<Fault>, val voltage: Double?, val notes: String)
-class TripRecord(val startMs: Long, val seconds: Double, val km: Double, val liters: Double, val maxKmh: Double)
+class TripRecord(val startMs: Long, val seconds: Double, val km: Double, val liters: Double, val maxKmh: Double, val score: Int = -1)
 class BatteryRecord(val timeMs: Long, val rest: Double?, val crank: Double?, val idle: Double?, val rev: Double?)
 class AiRecord(val timeMs: Long, val title: String, val text: String)
 
@@ -43,6 +43,13 @@ class Store(private val ctx: Context) {
     var autoUpdate: Boolean get() = prefs.getBoolean("autoUpdate", true); set(v) { prefs.edit().putBoolean("autoUpdate", v).apply() }
     var wifiOnlyUpdate: Boolean get() = prefs.getBoolean("wifiUpdate", true); set(v) { prefs.edit().putBoolean("wifiUpdate", v).apply() }
     var lastUpdateCheck: Long get() = prefs.getLong("updCheck", 0L); set(v) { prefs.edit().putLong("updCheck", v).apply() }
+    var flightOn: Boolean get() = prefs.getBoolean("flight", true); set(v) { prefs.edit().putBoolean("flight", v).apply() }
+    var coldCapture: Boolean get() = prefs.getBoolean("cold", true); set(v) { prefs.edit().putBoolean("cold", v).apply() }
+    var parkingOn: Boolean get() = prefs.getBoolean("parkingOn", false); set(v) { prefs.edit().putBoolean("parkingOn", v).apply() }
+    var autoBackup: Boolean get() = prefs.getBoolean("autoBackup", false); set(v) { prefs.edit().putBoolean("autoBackup", v).apply() }
+    var backupUri: String get() = prefs.getString("backupUri", "") ?: ""; set(v) { prefs.edit().putString("backupUri", v).apply() }
+    var lastBackup: Long get() = prefs.getLong("lastBackup", 0L); set(v) { prefs.edit().putLong("lastBackup", v).apply() }
+    var fuelCal: Double get() = (prefs.getString("fuelCal", "1.0") ?: "1.0").toDoubleOrNull() ?: 1.0; set(v) { prefs.edit().putString("fuelCal", v.toString()).apply() }
     var symptoms: String get() = prefs.getString("symptoms", "") ?: ""; set(v) { prefs.edit().putString("symptoms", v).apply() }
     var livePids: List<Int>
         get() = (prefs.getString("livePids", null) ?: Pids.defaultLive.joinToString(",")).split(",").mapNotNull { it.trim().toIntOrNull() }
@@ -113,15 +120,17 @@ class Store(private val ctx: Context) {
     }
 
     // ---- trips
-    fun loadTrips(): List<TripRecord> = readJson("trips.json").mapObjects { TripRecord(it.getLong("t"), it.getDouble("s"), it.getDouble("km"), it.getDouble("l"), it.getDouble("max")) }
+    private fun tripJson(t: TripRecord) = JSONObject().put("t", t.startMs).put("s", t.seconds).put("km", t.km).put("l", t.liters).put("max", t.maxKmh).put("sc", t.score)
+
+    fun loadTrips(): List<TripRecord> = readJson("trips.json").mapObjects { TripRecord(it.getLong("t"), it.getDouble("s"), it.getDouble("km"), it.getDouble("l"), it.getDouble("max"), it.optInt("sc", -1)) }
 
     fun addTrip(t: TripRecord) {
         val all = (listOf(t) + loadTrips()).take(300)
-        writeJson("trips.json", JSONArray().also { a -> all.forEach { a.put(JSONObject().put("t", it.startMs).put("s", it.seconds).put("km", it.km).put("l", it.liters).put("max", it.maxKmh)) } })
+        writeJson("trips.json", JSONArray().also { a -> all.forEach { a.put(tripJson(it)) } })
     }
 
     fun deleteTrip(startMs: Long) {
-        writeJson("trips.json", JSONArray().also { a -> loadTrips().filter { it.startMs != startMs }.forEach { a.put(JSONObject().put("t", it.startMs).put("s", it.seconds).put("km", it.km).put("l", it.liters).put("max", it.maxKmh)) } })
+        writeJson("trips.json", JSONArray().also { a -> loadTrips().filter { it.startMs != startMs }.forEach { a.put(tripJson(it)) } })
     }
 
     // ---- battery tests
@@ -183,6 +192,41 @@ class Store(private val ctx: Context) {
         writeJson("events.json", JSONArray().also { a -> list.takeLast(400).forEach { a.put(JSONObject().put("id", it.id).put("t", it.timeMs).put("type", it.type).put("title", it.title).put("detail", it.detail).put("km", it.km)) } })
     }
 
+    // ---- fuel log
+    fun loadFuel(): List<FuelEntry> = readJson("fuel.json").mapObjects { FuelEntry(it.getString("id"), it.getLong("t"), it.getInt("km"), it.getDouble("l"), it.optDouble("c", 0.0), it.optBoolean("full", true), it.optString("st")) }.sortedByDescending { it.km }
+
+    fun saveFuel(list: List<FuelEntry>) {
+        writeJson("fuel.json", JSONArray().also { a -> list.takeLast(600).forEach { a.put(JSONObject().put("id", it.id).put("t", it.timeMs).put("km", it.km).put("l", it.liters).put("c", it.cost).put("full", it.full).put("st", it.station)) } })
+    }
+
+    // ---- parts register (installed parts and their warranty)
+    fun loadPartsReg(): List<PartRecord> = readJson("parts.json").mapObjects { PartRecord(it.getString("id"), it.optString("name"), it.optLong("t"), it.optInt("km"), it.optInt("wm"), it.optInt("wk"), it.optString("notes")) }.sortedByDescending { it.installedMs }
+
+    fun savePartsReg(list: List<PartRecord>) {
+        writeJson("parts.json", JSONArray().also { a -> list.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("t", it.installedMs).put("km", it.km).put("wm", it.warrantyMonths).put("wk", it.warrantyKm).put("notes", it.notes)) } })
+    }
+
+    // ---- where the car was parked
+    fun loadParking(): ParkingSpot? {
+        val p = (prefs.getString("parking", "") ?: "").split("|")
+        if (p.size < 4) return null
+        return ParkingSpot(p[0].toDoubleOrNull() ?: return null, p[1].toDoubleOrNull() ?: return null, p[2].toLongOrNull() ?: return null, p[3].toIntOrNull() ?: 0)
+    }
+
+    fun saveParking(s: ParkingSpot) { prefs.edit().putString("parking", "${s.lat}|${s.lon}|${s.timeMs}|${s.accuracyM}").apply() }
+
+    // ---- ticked checklist items (pre-trip resets daily, summer checks monthly)
+    fun loadChecked(kind: String): Set<String> {
+        val key = if (kind == "summer") Docs.formatDate(System.currentTimeMillis()).substring(0, 7) else Docs.formatDate(System.currentTimeMillis())
+        val v = prefs.getString("chk_$kind", "") ?: ""
+        return if (v.startsWith("$key|")) v.substringAfter('|').split(",").filter { it.isNotBlank() }.toSet() else emptySet()
+    }
+
+    fun saveChecked(kind: String, ids: Set<String>) {
+        val key = if (kind == "summer") Docs.formatDate(System.currentTimeMillis()).substring(0, 7) else Docs.formatDate(System.currentTimeMillis())
+        prefs.edit().putString("chk_$kind", key + "|" + ids.joinToString(",")).apply()
+    }
+
     // ---- registration / insurance dates
     fun loadDocs(): List<DocReminder> {
         val saved = readJson("docs.json").mapObjects { DocReminder(it.getString("id"), it.getString("name"), it.getLong("due")) }
@@ -206,7 +250,7 @@ class Store(private val ctx: Context) {
     }
 
     // ---- backup: everything except recordings, in one text file
-    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "events.json", "providers.json")
+    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "events.json", "fuel.json", "parts.json", "providers.json")
 
     fun exportAll(includeKeys: Boolean): String {
         val root = JSONObject().put("app", "obdy").put("version", 1)

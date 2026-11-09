@@ -165,6 +165,10 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "guide" -> GuideScreen(vm)
                     "timeline" -> TimelineScreen(vm)
                     "fuses" -> FusesScreen(vm)
+                    "fuellog" -> FuelLogScreen(vm)
+                    "partsreg" -> PartsRegisterScreen(vm)
+                    "quote" -> QuoteScreen(vm)
+                    "checklist" -> ChecklistScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -276,6 +280,9 @@ fun HomeScreen(vm: ObdyVm) {
                 }
             }
         }
+        val bh = vm.batteryHealth()
+        if (bh != null && bh.level != com.example.obdy.Level.Good) Reveal(5) { BatteryHealthCard(vm) }
+        if (vm.parking != null || vm.parkingOn) Reveal(6) { ParkingCard(vm) }
         val due = vm.dueList().filter { it.overdue || it.soon }
         if (due.isNotEmpty()) Reveal(5) {
             Panel {
@@ -306,10 +313,12 @@ fun LiveScreen(vm: ObdyVm) {
                 SoftButton(if (vm.tripOn) "■ End trip" else "▶ Start trip + fuel", Modifier.weight(1f)) { if (vm.tripOn) vm.stopTrip() else vm.startTrip() }
                 SoftButton("Graphs", Modifier.weight(1f)) { vm.overlay = "records" }
             }
+            SymptomButton(vm, Modifier.fillMaxWidth())
             if (vm.tripOn) Panel {
                 Title("Trip in progress")
                 Label("${Calc.fmt(vm.tripKm, 2)} km  ·  ${Calc.fmt(vm.tripLiters, 2)} L  ·  ${(vm.tripSeconds / 60).toInt()} min")
                 Label("Average: " + (vm.tripL100?.let { Calc.fmt(it, 1) + " L/100 km" } ?: "-") + "   Now: " + (vm.instL100?.let { Calc.fmt(it, 1) + " L/100 km" } ?: Calc.fmt(vm.instLph, 1) + " L/h"), size = 13)
+                vm.tripScore?.let { Label("Driving score $it / 100  ·  ${vm.tripTip}", size = 13, color = Brand.Accent) }
                 if (vm.car.fuelPrice > 0) Label("Cost so far: ${Calc.fmt(vm.tripLiters * vm.car.fuelPrice, 2)}", size = 13)
                 if (!vm.supported.contains(0x10) && !vm.supported.contains(0x5E) && vm.supported.isNotEmpty()) Hint("This car reports neither air flow nor fuel rate, so fuel use cannot be calculated.")
             }
@@ -476,6 +485,10 @@ private class ToolItem(val ic: Ic, val title: String, val sub: String, val open:
 fun ToolsScreen(vm: ObdyVm) {
     val items = listOf(
         ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse, see where") { vm.fuseSel = null; vm.overlay = "fuses" },
+        ToolItem(Ic.Check, "Checklists", "Before a trip, summer") { vm.overlay = "checklist" },
+        ToolItem(Ic.Fuel, "Fuel log", "Real L/100 km and cost") { vm.overlay = "fuellog" },
+        ToolItem(Ic.Cpu, "Parts register", "Fitted parts and warranty") { vm.overlay = "partsreg" },
+        ToolItem(Ic.Camera, "Quote checker", "Photo of a workshop quote") { vm.overlay = "quote" },
         ToolItem(Ic.Doc, "Car guide", "Specs, schedule, lights") { vm.overlay = "guide" },
         ToolItem(Ic.Chart, "History and links", "Link events and faults") { vm.overlay = "timeline" },
         ToolItem(Ic.Chat, "Ask about your car", "Chat, photo, voice") { vm.overlay = "chat" },

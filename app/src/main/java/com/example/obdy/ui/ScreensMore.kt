@@ -210,6 +210,7 @@ fun SettingsScreen(vm: ObdyVm) {
                 Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature and oil life on the Live screen. Shown only if the module answers.") }
             }
         }
+        SmartSettingsPanels(vm)
         ExtraSettingsPanels(vm)
         ProvidersPanel(vm)
         Panel {
@@ -234,6 +235,7 @@ fun BatteryScreen(vm: ObdyVm) {
             vm.batBusy?.let { Label(it, bold = true, color = Brand.Amber) }
             if (vm.batMsg.isNotBlank()) Hint(vm.batMsg)
         }
+        BatteryHealthCard(vm)
         BatStep("1. Resting voltage", "Ignition ON, engine off, lights and A/C off.", vm.batRest, on && vm.batBusy == null) { vm.batteryStep(1) }
         BatStep("2. Starting dip", "Press the button, then START THE ENGINE within a few seconds. Some adapters restart while cranking: if so, skip this step.", vm.batCrank, on && vm.batBusy == null) { vm.batteryStep(2) }
         BatStep("3. Charging at idle", "Engine running at idle, lights and A/C off.", vm.batIdle, on && vm.batBusy == null) { vm.batteryStep(3) }
@@ -300,7 +302,7 @@ fun TripsScreen(vm: ObdyVm) {
                         Column(Modifier.weight(1f)) {
                             Label(fmtDate(t.startMs), bold = true)
                             Label("${Calc.fmt(t.km, 1)} km  ·  ${Calc.fmt(t.liters, 2)} L  ·  " + (if (t.km >= 0.2) Calc.fmt(t.liters / t.km * 100, 1) + " L/100" else "-"), size = 13)
-                            Hint("${(t.seconds / 60).toInt()} min  ·  top speed ${Calc.fmt(t.maxKmh, 0)} km/h")
+                            Hint("${(t.seconds / 60).toInt()} min  ·  top speed ${Calc.fmt(t.maxKmh, 0)} km/h" + (if (t.score >= 0) "  ·  driving score ${t.score}" else ""))
                             val rf = vm.routeFile(t)
                             if (rf != null) SoftButton("Share route (GPX)") { vm.shareFile(rf, "application/gpx+xml") }
                         }

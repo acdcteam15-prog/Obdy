@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">Obdy</string>
+    <string name="sc_live">Live data</string>
+    <string name="sc_live_long">Open live data</string>
+    <string name="sc_service">Service list</string>
+    <string name="sc_service_long">Open the service list</string>
+    <string name="sc_fuses">Fuse boxes</string>
+    <string name="sc_fuses_long">Find a fuse</string>
+    <string name="sc_chat">Ask the AI</string>
+    <string name="sc_chat_long">Ask the AI about your car</string>
 </resources>

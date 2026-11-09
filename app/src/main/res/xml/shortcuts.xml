@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="live" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_live" android:shortcutLongLabel="@string/sc_live_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="com.example.obdy" android:targetClass="com.example.obdy.MainActivity">
+            <extra android:name="open" android:value="live" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="service" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_service" android:shortcutLongLabel="@string/sc_service_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="com.example.obdy" android:targetClass="com.example.obdy.MainActivity">
+            <extra android:name="open" android:value="service" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="fuses" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_fuses" android:shortcutLongLabel="@string/sc_fuses_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="com.example.obdy" android:targetClass="com.example.obdy.MainActivity">
+            <extra android:name="open" android:value="fuses" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="chat" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_chat" android:shortcutLongLabel="@string/sc_chat_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="com.example.obdy" android:targetClass="com.example.obdy.MainActivity">
+            <extra android:name="open" android:value="chat" />
+        </intent>
+    </shortcut>
+</shortcuts>

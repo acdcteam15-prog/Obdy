@@ -14,26 +14,61 @@ object Calc {
     fun fmt(v: Double, digits: Int = 1): String = String.format(Locale.US, "%.${digits}f", v)
 }
 
-/** Adds up one drive: distance, fuel, time, idle time. Call [add] every time new live values arrive. */
+/** Adds up one drive: distance, fuel, time, idle time, and how smoothly it was driven. Call [add] every time new live values arrive. */
 class TripAcc {
     var seconds = 0.0; private set
     var km = 0.0; private set
     var liters = 0.0; private set
     var idleSeconds = 0.0; private set
     var maxKmh = 0.0; private set
+    var hardAccel = 0; private set
+    var hardBrake = 0; private set
+    var highRpmSeconds = 0.0; private set
+    private var prevSpeed: Double? = null
 
-    fun add(dtSeconds: Double, speedKmh: Double, litersPerHour: Double) {
-        if (dtSeconds <= 0 || dtSeconds > 10) return          // a gap (connection lost): do not invent distance
+    fun add(dtSeconds: Double, speedKmh: Double, litersPerHour: Double, rpm: Double? = null) {
+        if (dtSeconds <= 0 || dtSeconds > 10) { prevSpeed = null; return }          // a gap (connection lost): do not invent distance
         seconds += dtSeconds
         km += speedKmh * dtSeconds / 3600.0
         liters += litersPerHour * dtSeconds / 3600.0
         if (speedKmh < 1.0) idleSeconds += dtSeconds
         if (speedKmh > maxKmh) maxKmh = speedKmh
+        if (rpm != null && rpm > 4500) highRpmSeconds += dtSeconds
+        val p = prevSpeed
+        if (p != null && dtSeconds <= 3.0) {
+            val a = (speedKmh - p) / 3.6 / dtSeconds           // m/s^2
+            if (a > 2.8) hardAccel++ else if (a < -3.2) hardBrake++
+        }
+        prevSpeed = speedKmh
     }
 
     val avgKmh: Double get() = if (seconds > 0) km / (seconds / 3600.0) else 0.0
     val litersPer100: Double? get() = if (km >= 0.2) liters / km * 100.0 else null
     val kmPerLiter: Double? get() = if (liters > 0.01 && km >= 0.2) km / liters else null
+
+    /** 100 = smooth. Null until the drive is long enough to judge (3 km). */
+    val score: Int? get() {
+        if (km < 3.0 || seconds < 120) return null
+        val events = hardAccel + hardBrake * 1.5
+        var penalty = minOf(50.0, events / km * 8.0)
+        penalty += minOf(20.0, highRpmSeconds / seconds * 100.0 * 0.5)
+        val idleFrac = idleSeconds / seconds
+        if (idleFrac > 0.3) penalty += minOf(10.0, (idleFrac - 0.3) * 20.0)
+        return (100 - penalty).toInt().coerceIn(0, 100)
+    }
+
+    fun tip(): String {
+        val s = score ?: return "Drive at least 3 km for a score."
+        val kmv = maxOf(km, 1.0)
+        return when {
+            hardBrake / kmv > 0.6 -> "Hard braking is the main cost: look further ahead and ease off early."
+            hardAccel / kmv > 0.6 -> "Quick starts use fuel and wear parts: accelerate gently."
+            highRpmSeconds / seconds > 0.1 -> "The engine spent a lot of time above 4,500 rpm: shift up earlier or ease the pedal."
+            idleSeconds / seconds > 0.4 -> "Much of the time was idling: switch off when waiting longer than a minute (where safe)."
+            s >= 85 -> "Smooth driving. Good for fuel, brakes and tyres."
+            else -> "A little smoother braking and acceleration would save fuel."
+        }
+    }
 }
 
 enum class Level { Good, Warn, Bad, Info }

@@ -320,6 +320,7 @@ fun DashScreen(vm: ObdyVm) {
         }
         Text("✕", color = Brand.TextSecondary, fontSize = 26.sp, modifier = Modifier.align(Alignment.TopEnd).clickable { vm.overlay = null }.padding(16.dp))
         if (vm.conn != Conn.On) Text("Not connected", color = Brand.Amber, fontSize = 16.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp))
+        Box(Modifier.align(Alignment.BottomStart).padding(10.dp)) { SymptomButton(vm) }
     }
 }
 

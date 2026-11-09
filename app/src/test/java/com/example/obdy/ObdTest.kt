@@ -372,3 +372,80 @@ class FuseTest {
         assertTrue(Fuses.aiFacts(listOf("P0301")).contains("Ignition Coils"))
     }
 }
+
+class MoreTest {
+    private val day = 86_400_000L
+    private fun fill(t: Long, km: Int, l: Double, full: Boolean = true, cost: Double = l * 2.8) = FuelEntry("f$km", t, km, l, cost, full, "")
+
+    @Test fun fuelSegments() {
+        val e = listOf(fill(0, 10000, 40.0), fill(5 * day, 10500, 45.0), fill(10 * day, 11000, 20.0, false), fill(12 * day, 11400, 30.0))
+        val s = FuelLog.segments(e)
+        assertEquals(2, s.size)
+        assertEquals(9.0, s[0].l100, 0.01)                       // 45 L over 500 km
+        assertEquals(5.56, s[1].l100, 0.01)                      // (20 + 30) L over 900 km
+        assertEquals(6.79, FuelLog.averageL100(s)!!, 0.05)
+        assertNull(FuelLog.averageL100(emptyList()))
+        assertEquals(1.0, FuelLog.calibration(50.0, 50.0)!!, 0.001)
+        assertEquals(1.4, FuelLog.calibration(100.0, 50.0)!!, 0.001)
+        assertNull(FuelLog.calibration(3.0, 3.0))
+        assertEquals(2, FuelLog.monthly(listOf(fill(1_700_000_000_000L, 1, 10.0), fill(1_700_000_000_000L + 40 * day, 2, 10.0))).size)
+    }
+
+    @Test fun warranty() {
+        val p = PartRecord("b", "Battery", 1_700_000_000_000L, 100000, 24, 60000, "")
+        assertTrue(p.covered(1_700_000_000_000L + 100 * day, 110000))
+        assertFalse(p.covered(1_700_000_000_000L + 800 * day, 110000))
+        assertFalse(p.covered(1_700_000_000_000L + 100 * day, 170000))
+        assertEquals(50000, p.kmLeft(110000))
+        assertNull(PartRecord("x", "x", 0, 0, 0, 0, "").daysLeft(1L))
+    }
+
+    @Test fun batteryScore() {
+        val now = 1_800_000_000_000L
+        val good = BatteryScore.compute(listOf(BatteryRecord(now, 12.7, 10.4, 14.1, 14.2)), now - 8 * 30 * day, now)!!
+        assertTrue(good.score >= 90); assertEquals(Level.Good, good.level)
+        val bad = BatteryScore.compute(listOf(BatteryRecord(now, 12.1, 8.8, 13.0, null)), now - 40 * 30 * day, now)!!
+        assertEquals(Level.Bad, bad.level); assertNotNull(bad.replaceByMs)
+        assertNull(BatteryScore.compute(emptyList(), null, now))
+        val falling = listOf(BatteryRecord(now, 12.3, null, null, null), BatteryRecord(now - 30 * day, 12.5, null, null, null), BatteryRecord(now - 60 * day, 12.7, null, null, null))
+        assertTrue(BatteryScore.compute(falling, null, now)!!.details.any { it.contains("falling") })
+    }
+
+    @Test fun flightRecorderAndTriggers() {
+        val f = FlightRecorder(10_000)
+        for (i in 0 until 30) f.add(i * 1000L, mapOf(0x0C to 800.0 + i, 0x0D to 0.0))
+        assertTrue(f.size in 10..12)
+        val rec = f.snapshot("test")!!
+        assertEquals(2, rec.columns.size)
+        assertNull(FlightRecorder().snapshot("x"))
+        assertTrue(Triggers.check(mapOf(0x05 to 108.0, 0x0C to 800.0), emptyList()).any { it.key == "hot" })
+        assertTrue(Triggers.check(mapOf(0x42 to 11.2, 0x0C to 800.0), emptyList()).any { it.key == "lowv" })
+        assertTrue(Triggers.check(mapOf(0x42 to 11.2, 0x0C to 0.0), emptyList()).isEmpty())
+        assertTrue(Triggers.check(mapOf(0x0C to 800.0), List(12) { if (it % 2 == 0) 650.0 else 900.0 }).any { it.key == "rough" })
+        assertTrue(Triggers.check(mapOf(0x0C to 800.0), List(12) { 800.0 }).isEmpty())
+        assertTrue(Triggers.faultAppeared(0, false, 1, false)); assertTrue(Triggers.faultAppeared(1, false, 1, true)); assertFalse(Triggers.faultAppeared(1, true, 1, true))
+    }
+
+    @Test fun drivingScore() {
+        val smooth = TripAcc()
+        for (i in 0 until 600) smooth.add(1.0, minOf(80.0, i * 0.5), 5.0, 2200.0)
+        assertTrue(smooth.score!! >= 85)
+        val rough = TripAcc()
+        var v = 0.0
+        for (i in 0 until 600) { v = if (i % 8 < 4) minOf(100.0, v + 12.0) else maxOf(0.0, v - 14.0); rough.add(1.0, v, 8.0, 5200.0) }
+        assertTrue(rough.score!! < 60)
+        assertTrue(rough.hardAccel > 10 && rough.hardBrake > 10)
+        assertNull(TripAcc().score)
+        assertTrue(Checklist.summer.size >= 8 && Checklist.preTrip.size >= 6)
+    }
+}
+
+class DtcBigTest {
+    @Test fun biggerList() {
+        assertTrue(DtcDb.describe("P0125").contains("closed loop"))
+        assertTrue(DtcDb.describe("U0129").contains("brake system"))
+        assertTrue(DtcDb.describe("P2503").contains("Charging"))
+        assertTrue(DtcDb.known("P0710")); assertTrue(DtcDb.known("P0301"))
+        assertTrue(DtcDb.describe("P1999").startsWith("Manufacturer"))
+    }
+}

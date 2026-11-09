@@ -38,3 +38,15 @@ class RouteRecorder(private val ctx: Context) {
 
     fun stop() { try { lm?.removeUpdates(listener) } catch (_: Exception) {}; lm = null }
 }
+
+/** The last place the phone knew about (from GPS or the network). Used to remember where the car was parked. */
+object Where {
+    @SuppressLint("MissingPermission")
+    fun lastKnown(ctx: Context): Location? {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return null
+        return try {
+            val m = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).mapNotNull { try { m.getLastKnownLocation(it) } catch (e: Exception) { null } }.maxByOrNull { it.time }
+        } catch (e: Exception) { null }
+    }
+}

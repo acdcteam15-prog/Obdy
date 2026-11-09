@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -55,7 +56,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ car profile and settings
     var car by mutableStateOf(store.loadCar())
-    fun updateCar(c: Car) { car = c; store.saveCar(c) }
+    fun updateCar(c: Car) { car = c; store.saveCar(c); ObdyWidget.refresh(ctx) }
     var symptoms by mutableStateOf(store.symptoms)
     fun saveSymptoms(s: String) { symptoms = s; store.symptoms = s }
     // ---- AI providers
@@ -99,7 +100,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var askLocation: (() -> Unit)? = null
     var keepScreenOn by mutableStateOf(store.keepScreenOn)
     /** True only while something is actually running on a live connection. Otherwise the phone may turn the screen off normally. */
-    val keepAwake: Boolean get() = conn == Conn.On && (liveRunning || tripOn || recOn || healthBusy || batBusy != null || scanBusy || testsBusy || doctorBusy || clearing)
+    val keepAwake: Boolean get() = conn == Conn.On && (screenLive || tripOn || recOn || healthBusy || batBusy != null || scanBusy || testsBusy || doctorBusy || clearing)
     fun changeKeepScreen(v: Boolean) { keepScreenOn = v; store.keepScreenOn = v }
 
     // ------------------------------------------------------------------ connection
@@ -181,6 +182,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 conn = Conn.On
                 connStatus = "Connected: ${t.label}"
                 say("Connected. ${supported.size} live values available.")
+                coldPending = coldCapture
+                lastDtcCount = null; lastMil = null; flight.clear()
+                if (flightOn) wantLive("flight", true)
                 if (liveReasons.isNotEmpty()) startLive()
             } catch (e: CancellationException) {
                 t.close(); throw e
@@ -204,6 +208,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         connectJob?.cancel()
         liveJob?.cancel(); liveJob = null; liveRunning = false
+        liveReasons.remove("flight"); screenLive = liveReasons.any { it != "flight" }
         try { client?.close() } catch (_: Exception) {}
         client = null
         if (conn != Conn.Off) { conn = Conn.Off; connStatus = "Not connected" }
@@ -215,6 +220,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun linkLost(e: Exception) {
         AppLog.i("link lost: ${e.javaClass.simpleName}: ${e.message}")
         val msg = "Connection lost: ${e.message ?: e.javaClass.simpleName}"
+        if (parkingOn && conn == Conn.On) saveParkingHere(false)
         disconnect()
         connStatus = msg
         say("Connection to the adapter was lost.")
@@ -222,7 +228,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The Disconnect button: stops everything and does not try again by itself. */
-    fun userDisconnect() { reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; disconnect() }
+    fun userDisconnect() { reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; if (parkingOn && conn == Conn.On) saveParkingHere(false); disconnect() }
 
     private fun startReconnect() {
         reconnectJob?.cancel()
@@ -266,6 +272,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun wantLive(reason: String, on: Boolean) {
         if (on) liveReasons.add(reason) else liveReasons.remove(reason)
+        screenLive = liveReasons.any { it != "flight" }
         if (liveReasons.isEmpty()) stopLive() else if (conn == Conn.On) startLive()
     }
 
@@ -310,6 +317,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     val dt = (now - last) / 1e9; last = now
                     tripTick(dt)
                     recTick((now - t0) / 1e9)
+                    if (flightOn) flightTick(c)
                     cycle++
                     delay(15)
                 }
@@ -330,6 +338,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         val want = ArrayList<Int>(liveSel)
         if (tripAcc != null) want.addAll(listOf(0x0D, 0x10, 0x44, 0x5E))
         if (liveReasons.contains("dash")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
+        if (flightOn) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x06, 0x07, 0x04, 0x11, 0x10))
         return want.distinct().filter { (supported.isEmpty() || it in supported) && (dead[it] ?: 0) < 3 }
     }
 
@@ -343,6 +352,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var tripSeconds by mutableStateOf(0.0)
     var tripMaxKmh by mutableStateOf(0.0)
     var tripL100 by mutableStateOf<Double?>(null)
+    var tripScore by mutableStateOf<Int?>(null)
+    var tripTip by mutableStateOf("")
     var instLph by mutableStateOf(0.0)
     var instL100 by mutableStateOf<Double?>(null)
     var trips by mutableStateOf(store.loadTrips())
@@ -372,7 +383,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
         route = null
         if (a.km >= 0.05) {
-            store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh))
+            store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh, a.score ?: -1))
             trips = store.loadTrips()
             updateCar(car.copy(odometerKm = car.odometerKm + Math.round(a.km).toInt()))
             say("Trip saved: ${Calc.fmt(a.km, 1)} km")
@@ -387,11 +398,12 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         val speed = liveValues[0x0D] ?: 0.0
         val maf = liveValues[0x10]
         val lph = when {
-            maf != null -> Calc.fuelLitersPerHour(maf, liveValues[0x44] ?: 1.0)
+            maf != null -> Calc.fuelLitersPerHour(maf, liveValues[0x44] ?: 1.0) * fuelCal
             liveValues[0x5E] != null -> liveValues[0x5E] ?: 0.0
             else -> 0.0
         }
-        a.add(dt, speed, lph)
+        a.add(dt, speed, lph, liveValues[0x0C])
+        tripScore = a.score; tripTip = a.tip()
         instLph = lph
         instL100 = if (speed > 5 && lph > 0) lph / speed * 100.0 else null
         tripKm = a.km; tripLiters = a.liters; tripSeconds = a.seconds; tripMaxKmh = a.maxKmh; tripL100 = a.litersPer100
@@ -582,7 +594,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ maintenance
     var maint by mutableStateOf(store.loadMaintenance())
-    private fun saveMaint() { store.saveMaintenance(maint); maint = maint.toList() }
+    private fun saveMaint() { store.saveMaintenance(maint); maint = maint.toList(); ObdyWidget.refresh(ctx) }
 
     fun dueList(): List<Due> = maint.map { Maintenance.due(it, car.odometerKm, System.currentTimeMillis()) }
     fun markDone(item: MaintItem) { item.lastKm = car.odometerKm; item.lastDateMs = System.currentTimeMillis(); saveMaint() }
@@ -622,10 +634,12 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun docNotices(): List<String> {
         val now = System.currentTimeMillis()
-        return docs.filter { it.dueMs > 0 }.mapNotNull { d ->
+        val d1 = docs.filter { it.dueMs > 0 }.mapNotNull { d ->
             val n = d.daysLeft(now)
             if (n < 0) "${d.name} expired" else if (n <= 30) "${d.name} expires in $n days" else null
         }
+        val d2 = registry.mapNotNull { p -> p.daysLeft(now)?.let { n -> if (n in 0..30) "${p.name} warranty ends in $n days" else null } }
+        return d1 + d2
     }
 
     fun checkServiceNotice() {
@@ -1022,7 +1036,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun saveDoc(id: String, dateText: String): Boolean {
         val ms = Docs.parseDate(dateText) ?: return false
-        docs = docs.map { if (it.id == id) DocReminder(id, it.name, ms) else it }; store.saveDocs(docs); return true
+        docs = docs.map { if (it.id == id) DocReminder(id, it.name, ms) else it }; store.saveDocs(docs); ObdyWidget.refresh(ctx); return true
     }
 
     // ------------------------------------------------------------------ pickers (photo, backup file, voice)
@@ -1063,6 +1077,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val b = loadJpeg(uri, 1280)
                 if (b == null) say("Could not read that photo.") else { chatImage = b; say("Photo attached to your question") }
             }
+            "quote" -> {
+                val b = loadJpeg(uri, 1600)
+                if (b == null) say("Could not read that photo.") else { quoteImage = b; say("Photo attached") }
+            }
             "restore" -> {
                 val text = try { ctx.contentResolver.openInputStream(uri)?.use { String(it.readBytes(), Charsets.UTF_8) } } catch (e: Exception) { null }
                 val n = if (text == null) -1 else store.importAll(text)
@@ -1075,7 +1093,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     private fun reloadAll() {
         car = store.loadCar(); symptoms = store.symptoms; trips = store.loadTrips(); scanHistory = store.loadScans(); batHistory = store.loadBattery()
-        maint = store.loadMaintenance(); aiHistory = store.loadAi(); repairs = store.loadRepairs(); docs = store.loadDocs(); healthHistory = store.loadHealth(); logged = store.loadEvents()
+        maint = store.loadMaintenance(); aiHistory = store.loadAi(); repairs = store.loadRepairs(); docs = store.loadDocs(); healthHistory = store.loadHealth(); logged = store.loadEvents(); fuel = store.loadFuel(); registry = store.loadPartsReg()
         providers = store.loadProviders(); ignored = store.loadIgnored(); liveSel = store.livePids; applyTheme(store.themeKey)
         wifiHost = store.wifiHost; wifiPort = store.wifiPort.toString()
     }
@@ -1164,6 +1182,219 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         maint = merged; saveMaint()
         say("Manual schedule applied" + if (severe) " (severe use)" else "")
     }
+
+    // ------------------------------------------------------------------ smart monitoring: flight recorder, symptom button, cold start
+    val flight = FlightRecorder()
+    var flightOn by mutableStateOf(store.flightOn)
+    var coldCapture by mutableStateOf(store.coldCapture)
+    var screenLive by mutableStateOf(false)
+    private val alertCooldown = HashMap<String, Long>()
+    private var lastDtcCount: Int? = null
+    private var lastMil: Boolean? = null
+    private var flightCycle = 0
+    private var coldPending = false
+    private var coldRec: Recording? = null
+    private var coldIds: List<Int> = emptyList()
+    private var coldStartMs = 0L
+
+    fun changeFlight(on: Boolean) {
+        flightOn = on; store.flightOn = on
+        if (on) { if (conn == Conn.On) wantLive("flight", true) } else { wantLive("flight", false); flight.clear() }
+    }
+
+    fun changeCold(on: Boolean) { coldCapture = on; store.coldCapture = on }
+
+    private suspend fun flightTick(c: ElmClient) {
+        val now = System.currentTimeMillis()
+        val values = liveValues.toMap()
+        flight.add(now, values)
+        for (a in Triggers.check(values, flight.recentRpm(12))) {
+            if (now - (alertCooldown[a.key] ?: 0L) > 5 * 60_000L) { alertCooldown[a.key] = now; saveSnapshot(a.text) }
+        }
+        flightCycle++
+        if (flightCycle % 25 == 0) {
+            val m = c.exclusive { readMonitors() }
+            if (m != null) {
+                if (Triggers.faultAppeared(lastDtcCount, lastMil, m.dtcCount, m.milOn) && now - (alertCooldown["dtc"] ?: 0L) > 60_000L) {
+                    alertCooldown["dtc"] = now
+                    saveSnapshot("A fault code appeared (${m.dtcCount} stored)")
+                    say("A fault appeared. Open Faults and scan.")
+                }
+                lastDtcCount = m.dtcCount; lastMil = m.milOn
+            }
+        }
+        if (coldPending) {
+            val cool = values[0x05]
+            if (cool != null) {
+                coldPending = false
+                if (cool < 55 && (values[0x0C] ?: 0.0) > 300) {
+                    coldIds = listOf(0x0C, 0x05, 0x06, 0x07, 0x42, 0x04, 0x0B, 0x10, 0x14, 0x0F).filter { (supported.isEmpty() || it in supported) && Pids.byId(it) != null }
+                    val ps = coldIds.mapNotNull { Pids.byId(it) }
+                    coldRec = Recording("Cold start " + java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.US).format(java.util.Date(now)), now, ps.map { it.name }, ps.map { it.unit })
+                    coldStartMs = now
+                    say("Cold engine: recording the first 3 minutes")
+                }
+            }
+        }
+        val r = coldRec
+        if (r != null) {
+            r.add((now - coldStartMs) / 1000.0, DoubleArray(coldIds.size) { values[coldIds[it]] ?: Double.NaN })
+            if (now - coldStartMs > 180_000L) {
+                coldRec = null
+                if (r.rows.size >= 5) { store.saveRecording(r); loadRecordings(); say("Cold start recording saved") }
+            }
+        }
+    }
+
+    /** Saves the last minute of live data as a recording and notes it in your history. */
+    fun saveSnapshot(reason: String): Boolean {
+        val name = "Moment: $reason  " + java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.US).format(java.util.Date())
+        val rec = flight.snapshot(name)
+        if (rec == null) { say("Not enough data yet. Keep the connection running for a minute."); return false }
+        store.saveRecording(rec); loadRecordings()
+        addEvent(if (reason.startsWith("Symptom")) "note" else "light", reason, "The minute before it was saved in Recordings.")
+        return true
+    }
+
+    /** The "it is happening now" button. */
+    fun markSymptom(note: String) { if (saveSnapshot("Symptom: " + note.ifBlank { "marked by you" })) say("Saved the last minute of data") }
+
+    // ------------------------------------------------------------------ fuel log
+    var fuel by mutableStateOf(store.loadFuel())
+    var fuelCal by mutableStateOf(store.fuelCal)
+
+    fun saveFuel(e: FuelEntry) {
+        fuel = (fuel.filter { it.id != e.id } + e).sortedByDescending { it.km }; store.saveFuel(fuel)
+        if (e.km > car.odometerKm) updateCar(car.copy(odometerKm = e.km))
+        say("Fill-up saved")
+    }
+
+    fun deleteFuel(e: FuelEntry) { fuel = fuel.filter { it.id != e.id }; store.saveFuel(fuel) }
+
+    /** What the estimate would be multiplied by to match the pump, from your fill-ups and your recorded trips. */
+    fun fuelCalibrationSuggestion(): Double? {
+        val seg = FuelLog.segments(fuel)
+        val fulls = fuel.filter { it.full }.sortedBy { it.km }
+        if (seg.isEmpty() || fulls.size < 2) return null
+        val t0 = fulls.first().timeMs; val t1 = fulls.last().timeMs
+        val est = trips.filter { it.startMs in t0..t1 }.sumOf { it.liters }
+        val ratio = FuelLog.calibration(seg.sumOf { it.liters }, est) ?: return null
+        return (fuelCal * ratio).coerceIn(0.7, 1.4)
+    }
+
+    fun applyFuelCal(v: Double) { fuelCal = v; store.fuelCal = v; say("Fuel estimate calibrated (x${Calc.fmt(v, 2)})") }
+
+    // ------------------------------------------------------------------ parts register, battery health
+    var registry by mutableStateOf(store.loadPartsReg())
+
+    fun saveRegistryPart(p: PartRecord) { registry = (registry.filter { it.id != p.id } + p).sortedByDescending { it.installedMs }; store.savePartsReg(registry); say("Saved") }
+    fun deleteRegistryPart(p: PartRecord) { registry = registry.filter { it.id != p.id }; store.savePartsReg(registry) }
+
+    fun batteryHealth(): BatteryHealth? {
+        val installed = registry.filter { it.name.contains("battery", ignoreCase = true) }.maxByOrNull { it.installedMs }?.installedMs
+        return BatteryScore.compute(batHistory, installed, System.currentTimeMillis())
+    }
+
+    // ------------------------------------------------------------------ where I parked
+    var parking by mutableStateOf(store.loadParking())
+    var parkingOn by mutableStateOf(store.parkingOn)
+
+    fun changeParking(v: Boolean) { parkingOn = v; store.parkingOn = v; if (v && !RouteRecorder(ctx).hasPermission()) askLocation?.invoke() }
+
+    fun saveParkingHere(manual: Boolean) {
+        val l = Where.lastKnown(ctx)
+        if (l == null) { if (manual) { say("No location known yet. Turn on location and allow it for Obdy."); if (!RouteRecorder(ctx).hasPermission()) askLocation?.invoke() }; return }
+        val s = ParkingSpot(l.latitude, l.longitude, System.currentTimeMillis(), l.accuracy.toInt())
+        parking = s; store.saveParking(s)
+        if (manual) say("Parking spot saved")
+    }
+
+    fun openParkingInMaps() {
+        val p = parking ?: return
+        openUrl("geo:${p.lat},${p.lon}?q=${p.lat},${p.lon}(Parked car)")
+    }
+
+    // ------------------------------------------------------------------ pre-trip and summer checklists
+    var checkedPre by mutableStateOf(store.loadChecked("pre"))
+    var checkedSummer by mutableStateOf(store.loadChecked("summer"))
+
+    fun toggleCheck(kind: String, id: String) {
+        if (kind == "summer") { checkedSummer = if (id in checkedSummer) checkedSummer - id else checkedSummer + id; store.saveChecked("summer", checkedSummer) }
+        else { checkedPre = if (id in checkedPre) checkedPre - id else checkedPre + id; store.saveChecked("pre", checkedPre) }
+    }
+
+    fun refreshChecked() { checkedPre = store.loadChecked("pre"); checkedSummer = store.loadChecked("summer") }
+
+    // ------------------------------------------------------------------ quote checker (photo of a workshop quote)
+    var quoteImage by mutableStateOf<ByteArray?>(null)
+    var quoteText by mutableStateOf<String?>(null)
+    var quoteBusy by mutableStateOf(false)
+    var quoteError by mutableStateOf<String?>(null)
+
+    fun askQuote() {
+        val p = activeProvider
+        val img = quoteImage
+        if (p == null) { quoteError = "Add an AI service in Settings first."; return }
+        if (img == null) { quoteError = "Attach a photo of the quote or invoice first."; return }
+        if (quoteBusy) return
+        quoteBusy = true; quoteError = null
+        val now = System.currentTimeMillis()
+        val schedule = dueList().joinToString("\n") { d ->
+            "- ${d.item.name}: " + when {
+                !d.recorded -> "no record of when it was last done"
+                d.overdue -> "OVERDUE"
+                else -> listOfNotNull(d.kmLeft?.let { "$it km left" }, d.daysLeft?.let { "$it days left" }).joinToString(", ")
+            }
+        }
+        val prompt = aiPrompt(null,
+            "TASK: the attached photo is a workshop quote or invoice for this car (the car is in the UAE). Read every line. Then answer in plain text, short:\n" +
+            "1. A list of the lines with their prices.\n" +
+            "2. For each line say one of: NEEDED NOW (due or overdue by the service status below, or needed for a real fault), DUE LATER (say roughly when), NOT IN THE MANUAL SCHEDULE (optional or an upsell), or POSSIBLY REPEATED (already done recently per the history).\n" +
+            "3. The part of the total that looks justified and the part to question.\n" +
+            "4. Three questions to ask the workshop before agreeing.\n" +
+            "You cannot know local prices: judge need, timing and duplication only, and say so. If the photo is unreadable, say what you could not read.\n" +
+            "SERVICE STATUS OF THIS CAR (from the manual's severe-use schedule):\n$schedule", withFormat = false)
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
+            quoteBusy = false
+            if (r.text != null) quoteText = r.text.replace("**", "").replace("##", "") else quoteError = r.error
+        }
+    }
+
+    // ------------------------------------------------------------------ automatic backup to a folder you choose (Google Drive, phone storage...)
+    var autoBackup by mutableStateOf(store.autoBackup)
+    var backupFolder by mutableStateOf(store.backupUri)
+    var lastBackup by mutableStateOf(store.lastBackup)
+    var launchFolderPicker: (() -> Unit)? = null
+
+    fun changeAutoBackup(on: Boolean) {
+        autoBackup = on; store.autoBackup = on
+        if (on && backupFolder.isBlank()) launchFolderPicker?.invoke()
+    }
+
+    fun chooseBackupFolder(uri: String) { backupFolder = uri; store.backupUri = uri; say("Backup folder set") }
+
+    /** Writes a backup file (without AI keys) into the chosen folder. */
+    fun backupNow(manual: Boolean) {
+        val folder = backupFolder
+        if (folder.isBlank()) { if (manual) { say("Choose a backup folder first."); launchFolderPicker?.invoke() }; return }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val tree = Uri.parse(folder)
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                    val name = "obdy-backup-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date()) + ".json"
+                    val file = DocumentsContract.createDocument(ctx.contentResolver, docUri, "application/json", name)
+                    if (file == null) false else { ctx.contentResolver.openOutputStream(file)?.use { it.write(store.exportAll(false).toByteArray(Charsets.UTF_8)) }; true }
+                } catch (e: Exception) { AppLog.i("backup failed: ${e.message}"); false }
+            }
+            if (ok) { lastBackup = System.currentTimeMillis(); store.lastBackup = lastBackup; if (manual) say("Backup saved to your folder") }
+            else if (manual) say("Could not write to that folder. Choose it again.")
+        }
+    }
+
+    /** At app start: a weekly backup when it is switched on. */
+    fun maybeAutoBackup() { if (autoBackup && backupFolder.isNotBlank() && System.currentTimeMillis() - lastBackup > 7 * 86_400_000L) backupNow(false) }
 
     // ------------------------------------------------------------------ fuse boxes
     var fuseSel by mutableStateOf<FuseSlot?>(null)
