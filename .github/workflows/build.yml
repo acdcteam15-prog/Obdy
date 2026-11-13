@@ -26,6 +26,7 @@ jobs:
           java-version: '21'
 
       - uses: android-actions/setup-android@v3
+        continue-on-error: true
         with:
           packages: platform-tools
 
