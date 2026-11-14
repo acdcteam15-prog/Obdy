@@ -5,8 +5,12 @@ import kotlinx.coroutines.sync.withLock
 
 class AdapterInfo(val name: String, val voltage: Double?, val protocol: String)
 
-class FoundModule(val probe: ModuleProbe, val firstAnswer: String)
-class ModuleScan(val faults: List<Fault>, val notes: List<String>)
+class FoundModule(val probe: ModuleProbe, val firstAnswer: String, val name: String = probe.name)
+/** One line per module for the Faults screen: codes = null when the module never gave a fault list. */
+class ModuleResult(val name: String, val ids: String, val codes: Int?, val how: String, val module: FoundModule? = null)
+/** Identity of one module: label to value, plus the raw answers. */
+class ModuleInfo(val items: List<Pair<String, String>>, val raw: List<String>)
+class ModuleScan(val faults: List<Fault>, val notes: List<String>, val result: ModuleResult)
 class FreezeFrame(val code: String?, val values: List<Pair<Pid, Double>>)
 
 /**
@@ -78,7 +82,7 @@ class ElmClient(private val transport: Transport) {
     suspend fun supportedPids(): Set<Int> {
         val all = HashSet<Int>()
         var base = 0
-        while (base <= 0x80) {
+        while (base <= 0xC0) {
             val r = query("01%02X".format(base), 4000)
             val f = ecmFrame(r, 0x01, base) ?: break
             val set = Pids.supported(base, f.data.copyOfRange(2, minOf(f.data.size, 6)))
@@ -143,9 +147,69 @@ class ElmClient(private val transport: Transport) {
     }
     private suspend fun aimReset() { at("ATFCSM0"); at("ATCRA"); at("ATSH7DF") }
 
+    /** Functional "1A B0" to everyone (101 + extended address FE). Returns answer id -> diagnostic address. Read only. */
+    suspend fun broadcastIdentify(): Map<String, Int?> {
+        val out = LinkedHashMap<String, Int?>()
+        try {
+            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATSH101"); at("ATSTFF")
+            val r = query("FE021AB0", 3000)
+            for (f in r.frames) {
+                if (!f.header.startsWith("6") && !f.header.startsWith("7")) continue
+                // CAF off: bytes are raw, "03 5A B0 aa"
+                val i = (0 until f.data.size - 2).firstOrNull { f.u(it) == 0x5A && f.u(it + 1) == 0xB0 }
+                out[f.header] = i?.let { f.u(it + 2) }
+            }
+        } finally {
+            try { at("ATCAF1"); aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+        return out
+    }
+
+    /**
+     * Functional "A9 81 12" to everyone: every module with a code answers from its 5xx id. Catches codes from modules the
+     * per-module pass missed. Returns answer id (5xx) -> rows. Read only.
+     */
+    suspend fun broadcastFaults(): Map<String, List<Frame>> {
+        try {
+            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATSH101"); at("ATSTFF")
+            val r = query("FE03A98112", 5000)
+            return r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }.groupBy { it.header }
+        } finally {
+            try { at("ATCAF1"); aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+    }
+
+    /** Identity of one module (GM service 1A items: part numbers, programming date, VIN copy). Read only. */
+    suspend fun readModuleInfo(m: FoundModule): ModuleInfo {
+        val items = ArrayList<Pair<String, String>>(); val raw = ArrayList<String>()
+        items.add("CAN ids" to "${m.probe.req} → ${m.probe.resp}  (fault list from ${Gm.uudtId(m.probe.resp)})")
+        try {
+            aim(m.probe); at("ATSTFF")
+            for ((did, label) in Gm.identItems) {
+                val r = query("1A$did", 2000)
+                val f = r.frames.firstOrNull { it.u(0) == 0x5A && it.u(1) == did.toInt(16) }
+                raw.add("1A$did -> " + (r.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" }))
+                if (f != null) items.add(label to Gm.decodeIdent(did, IntArray(f.data.size - 2) { f.u(it + 2) }))
+            }
+            // Standard OBD identity for engine-side modules (09 0A = the module's own name).
+            if (m.probe.resp.startsWith("7E")) {
+                val n = query("090A", 3000).frames.firstOrNull { it.u(0) == 0x49 && it.u(1) == 0x0A }
+                if (n != null) items.add("Module says it is" to n.data.drop(3).map { it.toInt() and 0xFF }.filter { it in 0x20..0x7E }.joinToString("") { it.toChar().toString() })
+            }
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+        return ModuleInfo(items, raw)
+    }
+
     /** Looks for modules that answer a "tester present" request. Slow (about 10 s), so call it with progress. */
     suspend fun findModules(onProgress: (Int, Int, String) -> Unit): List<FoundModule> {
-        val probes = Gm.probes()
+        // 1) Ask every module at once which diagnostic address it has (GM functional id 101, read only). This finds modules
+        //    that sit outside the fixed address list below.
+        val heard = try { broadcastIdentify() } catch (_: Exception) { emptyMap() }
+        val base = Gm.probes()
+        val extra = heard.keys.filter { id -> base.none { it.resp == id } }.mapNotNull { Gm.probeForResponse(it) }
+        val probes = base + extra
         val found = ArrayList<FoundModule>()
         try {
             at("ATST20")
@@ -154,7 +218,13 @@ class ElmClient(private val transport: Transport) {
                 aim(p)
                 val r = query("3E00", 900)
                 val f = r.frames.firstOrNull { it.header == p.resp || it.header.isEmpty() }
-                if (f != null && f.data.isNotEmpty()) found.add(FoundModule(p, f.hex()))
+                    ?: if (p.resp in heard) Frame(p.resp, byteArrayOf(0x5A, 0xB0.toByte())) else null
+                if (f != null && f.data.isNotEmpty()) {
+                    // Ask which GM diagnostic address it has (1A B0, read only) to give it a real name.
+                    val id = query("1AB0", 900).frames.firstOrNull { it.header == p.resp && it.u(0) == 0x5A && it.u(1) == 0xB0 }
+                    val addr = if (id != null && id.data.size >= 3) id.u(2) else null
+                    found.add(FoundModule(p, f.hex(), if (p.verified) p.name else Gm.nameForDiagAddress(addr, p.name)))
+                }
             }
         } finally {
             try { aimReset(); at("ATST32") } catch (_: Exception) {}
@@ -162,47 +232,71 @@ class ElmClient(private val transport: Transport) {
         return found
     }
 
-    /** Reads the codes of one module with the common diagnostic services (UDS 19 02, then GM's A9 81). */
-    suspend fun readModuleFaults(m: FoundModule): ModuleScan {
+    /**
+     * Reads the codes of one module. GM cars of this age (GMLAN) do not know UDS 19, and they send the A9 81 answer as
+     * single frames from a SECOND id (5xx, e.g. 641 -> 541, 7E8 -> 5E8). The old receive filter only let 6xx through, so
+     * the codes were thrown away by the adapter and the log showed "NO DATA" (that was the "Service Power Steering" bug).
+     * [gmOnly] skips the UDS/OBD requests (used for the engine and transmission, already read with Mode 03/07/0A).
+     */
+    suspend fun readModuleFaults(m: FoundModule, gmOnly: Boolean = false): ModuleScan {
         val faults = ArrayList<Fault>(); val notes = ArrayList<String>()
-        val name = if (m.probe.verified) m.probe.name else "${m.probe.name} (${m.probe.req}/${m.probe.resp})"
+        val name = m.name
+        val ids = "${m.probe.req}/${m.probe.resp}"
+        var result = ModuleResult(name, ids, null, "no fault list", m)
         try {
             aim(m.probe)
             at("ATSTFF")      // GM body/chassis modules can need up to a second to answer (the default wait is 0.2 s)
-            // Ladder of read-only "which codes are stored" requests. The first one that gets a positive answer wins; every answer is
-            // written in the notes so a module that stays silent can be diagnosed from the log.
             val tried = ArrayList<String>()
             var done = false
-            for (req in listOf("1902FF", "190208", "A98112", "A981FF", "A98100", "A98012", "1800FF00", "170000")) {
-                val r = query(req, 2500)
-                val uds = r.frames.firstOrNull { it.u(0) == 0x59 }
-                val gm = r.frames.firstOrNull { it.u(0) == 0xE9 }
-                if (uds != null) {
-                    val list = DtcDecode.fromUds(uds)
-                    for ((c, st) in list) faults.add(Fault(c, name, "stored", st, uds.hex()))
-                    notes.add("$name: ${list.size} code(s) (UDS $req)"); done = true; break
+            // 1) GMLAN A9 81 with a receive filter that lets BOTH the normal id and the 5xx fault-list id through.
+            val uudt = Gm.uudtId(m.probe.resp)
+            val a = m.probe.resp.toInt(16); val b = uudt.toInt(16)
+            at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv()))
+            for (req in listOf("A98112", "A981FF", "A98108")) {
+                val r = query(req, 4000)
+                val rows = r.frames.filter { it.header == uudt && it.u(0) == 0x81 }
+                if (rows.isNotEmpty()) {
+                    val list = DtcDecode.fromGmlanRows(rows)
+                    for (d in list) faults.add(Fault(d.code, name, d.kind, d.status, d.raw))
+                    notes.add("$name: ${list.size} code(s) (GM $req from $uudt)")
+                    result = ModuleResult(name, ids, list.size, "GM A9 81", m); done = true; break
                 }
+                val gm = r.frames.firstOrNull { it.u(0) == 0xE9 }
                 if (gm != null) {
                     val list = DtcDecode.fromGmlan(gm)
                     for ((c, st) in list) faults.add(Fault(c, name, "stored", st, gm.hex()))
-                    notes.add("$name: ${list.size} code(s) (GM $req), raw ${gm.hex()}"); done = true; break
+                    notes.add("$name: ${list.size} code(s) (GM $req), raw ${gm.hex()}")
+                    result = ModuleResult(name, ids, list.size, "GM A9", m); done = true; break
+                }
+                tried.add("$req -> " + (if (r.frames.isEmpty()) "no answer" else r.frames.joinToString(" | ") { "${it.header} ${it.hex()}" }))
+            }
+            at("ATCRA${m.probe.resp}")
+            // 2) UDS (newer modules) and the old KWP requests.
+            if (!done && !gmOnly) for (req in listOf("1902FF", "190208", "1800FF00", "170000")) {
+                val r = query(req, 2500)
+                val uds = r.frames.firstOrNull { it.u(0) == 0x59 }
+                if (uds != null) {
+                    val list = DtcDecode.fromUds(uds)
+                    for ((c, st) in list) faults.add(Fault(c, name, "stored", st, uds.hex()))
+                    notes.add("$name: ${list.size} code(s) (UDS $req)")
+                    result = ModuleResult(name, ids, list.size, "UDS", m); done = true; break
                 }
                 tried.add("$req -> " + (if (r.frames.isEmpty()) "no answer" else r.frames.joinToString(" | ") { it.hex() }))
             }
-            if (!done) notes.add("$name answers but gave no codes. Tried: ${tried.joinToString("; ")}. First answer: ${m.firstAnswer}")
+            if (!done) notes.add("$name ($ids) answers but gave no fault list. Tried: ${tried.joinToString("; ")}. First answer: ${m.firstAnswer}")
         } finally {
             try { aimReset(); at("ATST32") } catch (_: Exception) {}
         }
-        return ModuleScan(faults, notes)
+        return ModuleScan(faults, notes, result)
     }
 
     /** Erases the codes of one non-engine module. Returns a short result text. */
     suspend fun clearModule(m: FoundModule): String {
         try {
             aim(m.probe)
-            if (query("14FFFFFF", 4000).frames.any { it.u(0) == 0x54 }) return "${m.probe.name}: cleared"
-            if (query("04", 4000).frames.any { it.u(0) == 0x44 }) return "${m.probe.name}: cleared"
-            return "${m.probe.name}: refused (needs a special session or security access)"
+            if (query("14FFFFFF", 4000).frames.any { it.u(0) == 0x54 }) return "${m.name}: cleared"
+            if (query("04", 4000).frames.any { it.u(0) == 0x44 }) return "${m.name}: cleared"
+            return "${m.name}: refused (needs a special session or security access)"
         } finally {
             try { aimReset() } catch (_: Exception) {}
         }
@@ -222,6 +316,29 @@ class ElmClient(private val transport: Transport) {
         }
     }
 
+
+    /** GM transmission values (Mode 22, read only): fluid temperature from the gearbox module and the current gear from the engine module. Null parts = no answer. */
+    class GearExtra(val tft: Double?, val gear: Int?, val raw: String)
+
+    suspend fun readGearExtra(): GearExtra {
+        var tft: Double? = null
+        var gear: Int? = null
+        val raw = ArrayList<String>()
+        try {
+            at("ATST32")
+            at("ATSH7E2"); at("ATCRA7EA")
+            val a = query("221940", 1500)
+            raw.add("221940 -> " + a.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" })
+            a.frames.firstOrNull { it.u(0) == 0x62 && it.data.size >= 4 && it.u(1) == 0x19 && it.u(2) == 0x40 }?.let { tft = it.u(3) - 40.0 }
+            at("ATSH7E0"); at("ATCRA7E8")
+            val b = query("22199A", 1500)
+            raw.add("22199A -> " + b.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" })
+            b.frames.firstOrNull { it.u(0) == 0x62 && it.data.size >= 4 && it.u(1) == 0x19 && it.u(2) == 0x9A }?.let { gear = it.u(3) }
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+        return GearExtra(tft, gear, raw.joinToString("; "))
+    }
 
     /** Several live values in one request (faster). Null when the car does not answer that way. */
     suspend fun readPids(pids: List<Pid>): Map<Int, Double>? {
@@ -276,9 +393,25 @@ class ElmClient(private val transport: Transport) {
                 at("ATSTFF")
                 out.add("--- module ${m.probe.req}/${m.probe.resp} (${m.probe.name})")
                 for (c in listOf("1A90", "1AB0", "1ABB", "22F190", "22F187", "22F18A", "22F18C", "22F194", "22F1A0")) ask(c, 1200)
+                val uudt = Gm.uudtId(m.probe.resp); val a = m.probe.resp.toInt(16); val b = uudt.toInt(16)
+                at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv()))
+                for (c in listOf("A98112", "A981FF")) ask(c, 3000)
             } finally {
                 try { aimReset(); at("ATST32") } catch (_: Exception) {}
             }
+        }
+        // GM manufacturer values (Mode 22), read only: transmission fluid temperature from the TCM, oil temperature/pressure/life and current gear from the ECM.
+        onProgress("Transmission and engine extra values (GM)")
+        try {
+            at("ATST32")
+            out.add("--- GM extra values, TCM 7E2/7EA")
+            at("ATSH7E2"); at("ATCRA7EA")
+            for (c in listOf("221940", "22199A", "221941", "221942")) ask(c, 1500)
+            out.add("--- GM extra values, ECM 7E0/7E8")
+            at("ATSH7E0"); at("ATCRA7E8")
+            for (c in listOf("221154", "221470", "22115C", "22119F", "22199A")) ask(c, 1500)
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
         }
         // GM "all modules" (functional) question: id 101, no receive filter, so every module that answers shows up with its own id.
         onProgress("Asking all modules at once (GM)")

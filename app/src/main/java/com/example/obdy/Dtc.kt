@@ -47,6 +47,25 @@ object DtcDecode {
         return out
     }
 
+    class GmDtc(val code: String, val kind: String, val status: String, val raw: String)
+
+    /**
+     * GMLAN A9 81 answer: one CAN frame per code from the 5xx id, "81 DTC-hi DTC-lo FTB status". DTC 00 00 ends the list.
+     * Status bit 0 = failing now. Best effort: the failure-type byte is shown as a suffix (C0545-5A style).
+     */
+    fun fromGmlanRows(rows: List<Frame>): List<GmDtc> {
+        val out = ArrayList<GmDtc>()
+        for (f in rows) {
+            if (f.data.size < 4 || f.u(0) != 0x81) continue
+            val hi = f.u(1); val lo = f.u(2); val ftb = f.u(3); val st = f.u(4)
+            if (hi == 0 && lo == 0) break
+            val code = fromBytes(hi, lo) + (if (ftb != 0) "-%02X".format(ftb) else "")
+            val kind = if ((st and 0x01) != 0) "active" else "history"
+            if (out.none { it.code == code }) out.add(GmDtc(code, kind, "status %02X".format(st), f.hex()))
+        }
+        return out
+    }
+
     /** GM GMLAN ReadDiagnosticInformation (A9 81): E9 81 [count] then 3 bytes per code (2 code bytes + status). Best effort. */
     fun fromGmlan(f: Frame): List<Pair<String, String>> {
         if (f.data.size < 2 || f.u(0) != 0xE9) return emptyList()
@@ -538,6 +557,7 @@ object DtcDb {
             c in setOf("P0711", "P0712", "P0713", "P0218") -> listOf("Transmission fluid too hot (towing, heat, low fluid) or temperature sensor wiring", "Cooler line restriction")
             c.startsWith("U0") -> listOf("Weak battery or low voltage (very common cause of U-codes)", "Damaged wiring or connector on the CAN bus", "Bad ground", "A module that failed or lost power. If many modules are 'lost', suspect power/ground or the bus")
             c.startsWith("C00") || c.startsWith("C02") -> listOf("Wheel speed sensor, its wiring or the tone ring (dirt, metal debris, rust)", "Wheel bearing play", "Low battery voltage", "ABS module")
+            c.startsWith("C04") || c.startsWith("C05") || c.startsWith("C08") || c.startsWith("C1") -> listOf("Low battery or charging voltage (very common cause of 'Service Power Steering' on Malibu: test the battery first)", "Loose or corroded battery terminals / ground strap", "Steering column module connectors (torque and position sensor)", "Electric power steering motor or its control module", "After a battery change: steering angle may need a relearn (turn lock to lock with engine running)")
             c.startsWith("B0") -> listOf("Airbag (SRS) fault: do not probe airbag connectors with the battery connected", "Connector under the seat or clock spring", "Seat belt buckle/pretensioner circuit or occupant sensor", "Have the SRS scanned and repaired by a workshop")
             else -> emptyList()
         }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -170,6 +171,7 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "quote" -> QuoteScreen(vm)
                     "checklist" -> ChecklistScreen(vm)
                     "lab" -> LabScreen(vm)
+                    "gearbox" -> GearboxScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -238,6 +240,16 @@ fun HomeScreen(vm: ObdyVm) {
     ScreenFrame("Obdy", null, subtitle = vm.car.name) {
         val on = vm.conn == Conn.On
         Reveal(0) { HeroCard(vm) }
+        vm.chargeWarning?.let { w -> Reveal(1) {
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppIcon(Ic.Battery, size = 22.dp, color = Brand.Red); Title("Battery not charging")
+                }
+                Hint(w)
+                SoftButton("Open the battery test", Modifier.fillMaxWidth()) { vm.overlay = "battery" }
+            }
+        } }
+        Reveal(1) { MileageCard(vm) }
         if (vm.updateReady != null) Reveal(1) {
             Panel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -250,7 +262,7 @@ fun HomeScreen(vm: ObdyVm) {
         Reveal(1) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Tile(Ic.Search, "Scan codes", "Engine and gearbox", Modifier.weight(1f), accent = true, enabled = on && !vm.scanBusy) { vm.scan(false); vm.tab = 2 }
-                Tile(Ic.Shield, "Deep scan", "ABS, airbag, body", Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true); vm.tab = 2 }
+                Tile(Ic.Shield, "Deep scan", "Every module, steering too", Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true); vm.tab = 2 }
             }
         }
         Reveal(2) {
@@ -364,21 +376,37 @@ fun FaultsScreen(vm: ObdyVm) {
     var confirmClear by remember { mutableStateOf(false) }
     val on = vm.conn == Conn.On
     ScreenFrame("Faults", null) {
+        // ---- status summary
+        if (vm.lastScanMs > 0 && !vm.scanBusy) FaultSummary(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GradientButton("Quick scan", Brand.MainBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(false) }
             GradientButton("Deep scan", Brand.AltBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true) }
         }
-        Hint("Quick scan: engine and transmission. Deep scan also looks for ABS, airbag, body and other modules (about 15 seconds).")
+        Hint("Quick: engine and transmission (a few seconds). Deep: also brakes, airbag, body, steering and every other module that answers (about 30 seconds).")
         if (!on) Panel { Label("Not connected."); SoftButton("Connect to the car") { vm.overlay = "connect" } }
-        if (vm.scanBusy) Panel { Title("Scanning..."); Hint(vm.scanProgress) }
+        if (vm.scanBusy) Panel {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatusDot(Brand.Accent, pulsing = true); Title("Scanning...")
+                Spacer(Modifier.weight(1f))
+                vm.scanFraction?.let { Text("${(it * 100).toInt()}%", color = Brand.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+            }
+            ScanBar(vm.scanFraction)
+            Hint(vm.scanProgress)
+        }
 
         if (vm.lastScanMs > 0 && !vm.scanBusy) {
-            Hint("Scanned ${fmtDate(vm.lastScanMs)}")
-            if (vm.visibleFaults.isEmpty()) Panel { Label("No fault codes in the modules that answered" + (if (vm.hiddenFaults.isNotEmpty()) " (besides the ${vm.hiddenFaults.size} you hid)." else "."), color = Brand.Green, bold = true) }
+            if (vm.lastDeepMs == 0L) Panel {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppIcon(Ic.Info, size = 20.dp, color = Brand.Amber)
+                    Label("Message on the dash but no code here?", bold = true, color = Brand.Amber)
+                }
+                Hint("Warnings like \"Service Power Steering\", ABS or airbag are stored in their own modules, not the engine. Run a Deep scan to read them.")
+            }
             for ((module, list) in vm.visibleFaults.groupBy { it.module }) {
-                Title("$module (${list.size})")
+                Text("$module  ·  ${list.size}", color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 for (f in list) FaultCard(vm, f, open == f.key, { open = if (open == f.key) null else f.key })
             }
+            if (vm.moduleResults.isNotEmpty()) ModulesPanel(vm)
             if (vm.hiddenFaults.isNotEmpty()) Panel {
                 Title("Hidden in Obdy (${vm.hiddenFaults.size})")
                 Hint("The car still has these codes. They only stay out of your lists.")
@@ -387,29 +415,42 @@ fun FaultsScreen(vm: ObdyVm) {
                     SoftButton("Show again") { vm.restoreCode(f.code) }
                 }
             }
-            if (vm.scanNotes.isNotEmpty()) Panel {
-                Title("Scan notes")
-                for (n in vm.scanNotes) Hint(n)
-            }
             val m = vm.monitors
             if (m != null) Panel {
-                Title("Warning light and readiness")
-                Label("Warning light: " + if (m.milOn) "ON" else "off", color = if (m.milOn) Brand.Red else Brand.Green, bold = true)
-                Hint("Monitors that are not complete mean the car has not finished its self-tests since codes were cleared or the battery was disconnected.")
-                for (x in m.monitors.filter { it.supported }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (x.complete) "✓" else "…", color = if (x.complete) Brand.Green else Brand.Amber, fontSize = 16.sp, modifier = Modifier.width(24.dp))
-                        Label(x.name + if (x.complete) "" else " (not complete)", size = 14)
-                    }
+                Title("Readiness self-tests")
+                val sup = m.monitors.filter { it.supported }
+                val done = sup.count { it.complete }
+                Hint("$done of ${sup.size} finished. Unfinished tests run by themselves during normal mixed driving; they only matter for an emissions test.")
+                for (pair in sup.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (x in pair) ReadyChip(x.name, x.complete, Modifier.weight(1f))
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
             val fz = vm.freeze
             if (fz != null && fz.code != null) Panel {
                 Title("Freeze frame: ${fz.code}")
                 Hint("What the engine was doing the moment this fault was stored.")
-                for ((p, v) in fz.values) Label("${p.name}: ${Calc.fmt(v, 1)} ${p.unit}", size = 14)
+                for ((p, v) in fz.values) Row {
+                    Text(p.name, color = Brand.TextSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text("${Calc.fmt(v, 1)} ${p.unit}", color = Brand.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
-            if (on) GradientButton("Clear codes", Brand.DangerBrush, enabled = !vm.clearing && !vm.scanBusy) { confirmClear = true }
+            if (vm.scanNotes.isNotEmpty()) {
+                var showNotes by remember { mutableStateOf(false) }
+                Panel(Modifier.clickable { showNotes = !showNotes }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Title("Technical details"); Spacer(Modifier.weight(1f))
+                        Hint(if (showNotes) "Hide" else "Show")
+                    }
+                    AnimatedVisibility(visible = showNotes, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { for (n in vm.scanNotes) Text(n, color = Brand.TextSecondary, fontSize = 11.sp) }
+                    }
+                }
+            }
+            if (on) {
+                GradientButton("Clear codes", Brand.DangerBrush, enabled = !vm.clearing && !vm.scanBusy) { confirmClear = true }
+                if (vm.faults.any { it.kind == "permanent" }) Hint("Permanent codes cannot be cleared by any scanner: the engine computer removes them itself after the test passes again on a few drives.")
+            }
         }
 
         Panel {
@@ -454,6 +495,7 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
         AnimatedVisibility(visible = expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Spacer(Modifier.height(2.dp))
+                kindText(f.kind)?.let { Label(it, color = Brand.Blue, size = 13) }
                 Label(DtcDb.severityText(sev), color = c, size = 13)
                 Label(DtcDb.system(f.code), color = Brand.TextSecondary, size = 12)
                 val causes = DtcDb.causes(f.code)
@@ -479,45 +521,222 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
     }
 }
 
+private fun kindText(kind: String): String? = when (kind) {
+    "permanent" -> "Permanent: stored earlier and kept until the car re-tests the system and it passes. With the warning light off, the fault is not active right now."
+    "pending" -> "Pending: seen once; it becomes a stored code (and may light the warning) if it happens again."
+    "stored" -> "Stored: confirmed fault."
+    "active" -> "Active: the module sees this fault right now."
+    "history" -> "History: happened before and is not failing at the moment."
+    else -> null
+}
+
+@Composable
+private fun FaultSummary(vm: ObdyVm) {
+    val list = vm.visibleFaults
+    val mil = vm.monitors?.milOn == true
+    val urgent = list.any { DtcDb.severity(it.code) == 2 && it.kind != "history" && it.kind != "permanent" }
+    val (color, head) = when {
+        mil || urgent -> Brand.Red to (if (list.isEmpty()) "Warning light on" else "${list.size} fault code${if (list.size == 1) "" else "s"} need attention")
+        list.isNotEmpty() -> Brand.Amber to "${list.size} code${if (list.size == 1) "" else "s"} found"
+        else -> Brand.Green to "No fault codes"
+    }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(color.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                AppIcon(if (list.isEmpty() && !mil) Ic.Heart else Ic.Warning, size = 24.dp, color = color)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(head, color = Brand.TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                val modules = if (vm.lastDeepMs > 0) "${vm.moduleResults.size} modules read" else "engine and transmission only"
+                Hint("Warning light ${if (mil) "ON" else "off"}  ·  $modules  ·  ${fmtDate(vm.lastScanMs)}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanBar(frac: Float?) {
+    val target = frac ?: 0f
+    val anim by animateFloatAsState(targetValue = target, animationSpec = tween(400), label = "scanbar")
+    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Brand.Track)) {
+        if (frac != null) Box(Modifier.fillMaxWidth(anim).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Brand.MainBrush))
+    }
+}
+
+@Composable
+private fun ModulesPanel(vm: ObdyVm) {
+    var openId by remember { mutableStateOf<String?>(null) }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Title("Modules"); Spacer(Modifier.weight(1f))
+            val withCodes = vm.moduleResults.count { (it.codes ?: 0) > 0 }
+            Pill("${vm.moduleResults.size} found", Brand.Blue)
+            if (withCodes > 0) { Spacer(Modifier.width(6.dp)); Pill("$withCodes with codes", Brand.Red) }
+        }
+        Hint("Every computer that answered the deep scan${if (vm.lastDeepMs > 0) " (" + fmtDate(vm.lastDeepMs) + ")" else ""}. Tap one for its identity and codes.")
+        for (r in vm.moduleResults) {
+            val key = r.ids
+            val (col, txt) = when {
+                r.codes == null -> Brand.TextSecondary to "no list"
+                r.codes == 0 -> Brand.Green to "clear"
+                else -> Brand.Red to "${r.codes} code${if (r.codes == 1) "" else "s"}"
+            }
+            val isOpen = openId == key
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (isOpen) Brand.Track else Color.Transparent).clickable { openId = if (isOpen) null else key }.padding(horizontal = 8.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(col.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                        AppIcon(moduleIcon(r.name), size = 18.dp, color = col)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(r.name, color = Brand.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(r.ids + "  ·  " + r.how, color = Brand.TextSecondary, fontSize = 11.sp)
+                    }
+                    Pill(txt, col)
+                }
+                AnimatedVisibility(visible = isOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val codes = vm.faults.filter { it.module == r.name }
+                        if (codes.isEmpty()) Hint(if (r.codes == null) "This module answers but did not give a fault list with any known request." else "No codes stored in this module.")
+                        for (f in codes) Row {
+                            Text(f.code, color = Brand.Red, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(92.dp))
+                            Text(f.description, color = Brand.TextPrimary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        }
+                        val m = r.module
+                        val info = m?.let { vm.moduleInfo[it.probe.resp] }
+                        if (info != null) {
+                            Text("Identity", color = Brand.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            for ((k, v) in info.items) Row {
+                                Text(k, color = Brand.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text(v, color = Brand.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1.3f))
+                            }
+                        }
+                        if (m != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SoftButton(if (vm.infoBusy == m.probe.resp) "Reading..." else if (info == null) "Read identity" else "Read again", Modifier.weight(1f), enabled = vm.infoBusy == null && vm.conn == Conn.On) { vm.readInfo(m) }
+                            SoftButton("Rescan codes", Modifier.weight(1f), enabled = !vm.scanBusy && vm.conn == Conn.On) { vm.rescanModule(m) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun moduleIcon(name: String): Ic {
+    val n = name.lowercase()
+    return when {
+        "engine" in n || "fuel" in n -> Ic.Fuel
+        "transmission" in n -> Ic.Gear
+        "brake" in n || "airbag" in n -> Ic.Shield
+        "body" in n || "cluster" in n -> Ic.Car
+        else -> Ic.Cpu
+    }
+}
+
+@Composable
+private fun ReadyChip(name: String, done: Boolean, modifier: Modifier) {
+    val c = if (done) Brand.Green else Brand.Amber
+    Row(modifier.clip(RoundedCornerShape(12.dp)).background(c.copy(alpha = 0.10f)).padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(if (done) "✓" else "…", color = c, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(18.dp))
+        Text(name, color = Brand.TextPrimary, fontSize = 12.sp, maxLines = 2)
+    }
+}
+
+@Composable
+private fun MileageCard(vm: ObdyVm) {
+    val km = vm.car.odometerKm
+    val on = vm.conn == Conn.On
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(Brand.Accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                AppIcon(Ic.Gauge, size = 22.dp, color = Brand.Accent)
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Mileage", color = Brand.TextSecondary, fontSize = 12.sp)
+                Text(if (km > 0) "%,d km".format(km) else "Not set", color = Brand.TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+            val (c, t) = when (vm.odoSource) {
+                ObdyVm.OdoSource.Car -> Brand.Green to "live"
+                ObdyVm.OdoSource.Tracked -> Brand.Green to "auto"
+                ObdyVm.OdoSource.Manual -> Brand.Amber to "manual"
+                ObdyVm.OdoSource.Unknown -> Brand.TextSecondary to "not set"
+            }
+            Pill(t, c)
+        }
+        if (km <= 0) {
+            Hint("Type the mileage from your dash once; Obdy then follows it automatically with the car's own distance counter.")
+            SoftButton("Enter mileage", Modifier.fillMaxWidth()) { vm.tab = 4 }
+        } else {
+            val bits = ArrayList<String>()
+            vm.lastD31?.let { bits.add("$it km since codes were cleared") }
+            vm.kmPerDay()?.let { bits.add("about ${Calc.fmt(it, 0)} km a day") }
+            if (vm.odoSyncMs > 0) bits.add("checked ${fmtDate(vm.odoSyncMs)}")
+            if (bits.isNotEmpty()) Hint(bits.joinToString("  ·  "))
+            val next = vm.dueList().filter { it.kmLeft != null }.minByOrNull { it.kmLeft!! }
+            if (next != null) Label(if (next.kmLeft!! < 0) "${next.item.name}: overdue by %,d km".format(-next.kmLeft) else "Next: ${next.item.name} in %,d km".format(next.kmLeft), color = if (next.kmLeft < 0) Brand.Red else if (next.kmLeft <= 500) Brand.Amber else Brand.TextPrimary, size = 14)
+            if (on) SoftButton("Update from the car", Modifier.fillMaxWidth()) { vm.syncOdometerNow() }
+        }
+    }
+}
+
 // ====================================================================================== Tools
 private class ToolItem(val ic: Ic, val title: String, val sub: String, val open: () -> Unit)
 
 @Composable
 fun ToolsScreen(vm: ObdyVm) {
-    val items = listOf(
-        ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse, see where") { vm.fuseSel = null; vm.overlay = "fuses" },
-        ToolItem(Ic.Check, "Checklists", "Before a trip, summer") { vm.overlay = "checklist" },
-        ToolItem(Ic.Fuel, "Fuel log", "Real L/100 km and cost") { vm.overlay = "fuellog" },
-        ToolItem(Ic.Cpu, "Parts register", "Fitted parts and warranty") { vm.overlay = "partsreg" },
-        ToolItem(Ic.Camera, "Quote checker", "Photo of a workshop quote") { vm.overlay = "quote" },
-        ToolItem(Ic.Doc, "Car guide", "Specs, schedule, lights") { vm.overlay = "guide" },
-        ToolItem(Ic.Chart, "History and links", "Link events and faults") { vm.overlay = "timeline" },
-        ToolItem(Ic.Chat, "Ask about your car", "Chat, photo, voice") { vm.overlay = "chat" },
+    var more by remember { mutableStateOf(false) }
+    val start = listOf(
+        ToolItem(Ic.Cpu, "Gearbox", "Hard shifts, forward and reverse") { vm.overlay = "gearbox" },
         ToolItem(Ic.Search, "Find the cause", "Questions, then a fix") { vm.gCode = null; vm.overlay = "guided" },
-        ToolItem(Ic.Cpu, "Claude Lab", "Send logs, live data, tests") { vm.overlay = "lab" },
-        ToolItem(Ic.Pin, "Where is the part?", "Diagram of the car") { vm.showParts(null) },
+        ToolItem(Ic.Chat, "Ask about your car", "Chat, photo, voice") { vm.overlay = "chat" },
         ToolItem(Ic.Heart, "Health check", "Idle test and trends") { vm.overlay = "health" },
         ToolItem(Ic.Cpu, "Engine self-tests", "Misfire counts, catalyst") { vm.overlay = "tests" },
-        ToolItem(Ic.Shield, "Inspection check", "Ready for the test?") { vm.overlay = "inspection" },
         ToolItem(Ic.Battery, "Battery test", "Start and charging") { vm.overlay = "battery" },
-        ToolItem(Ic.Fuel, "Fuel and trips", "Litres per 100 km") { vm.overlay = "trips" },
-        ToolItem(Ic.Chart, "Recordings", "Graphs, compare drives") { vm.overlay = "records" },
-        ToolItem(Ic.Cash, "Repairs and costs", "History and receipts") { vm.overlay = "expenses" },
-        ToolItem(Ic.Gauge, "Dashboard mode", "Big landscape gauges") { vm.overlay = "dash" },
-        ToolItem(Ic.Globe, "Online checks", "Recalls, web, research") { vm.overlay = "online" },
-        ToolItem(Ic.Bolt, "AI analysis", "Deeper reasoning") { vm.overlay = "ai" },
-        ToolItem(Ic.Wrench, "Relearn guides", "After battery or cleaning") { vm.overlay = "relearn" },
-        ToolItem(Ic.Plug, "Adapter doctor", "Test the adapter") { vm.overlay = "doctor" },
-        ToolItem(Ic.Terminal, "Console", "Raw commands and log") { vm.overlay = "console" },
     )
-    ScreenFrame("Tools", null, subtitle = "Everything else Obdy can do") {
+    val groups = listOf(
+        "Fix and learn" to listOf(
+            ToolItem(Ic.Wrench, "Relearn guides", "After battery or cleaning") { vm.overlay = "relearn" },
+            ToolItem(Ic.Pin, "Where is the part?", "Diagram of the car") { vm.showParts(null) },
+            ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse, see where") { vm.fuseSel = null; vm.overlay = "fuses" },
+            ToolItem(Ic.Doc, "Car guide", "Specs, schedule, lights") { vm.overlay = "guide" },
+            ToolItem(Ic.Globe, "Online checks", "Recalls, web, research") { vm.overlay = "online" },
+            ToolItem(Ic.Bolt, "AI analysis", "Deeper reasoning") { vm.overlay = "ai" },
+            ToolItem(Ic.Camera, "Quote checker", "Photo of a workshop quote") { vm.overlay = "quote" },
+        ),
+        "Trips and records" to listOf(
+            ToolItem(Ic.Fuel, "Fuel and trips", "Litres per 100 km") { vm.overlay = "trips" },
+            ToolItem(Ic.Chart, "Recordings", "Graphs, compare drives") { vm.overlay = "records" },
+            ToolItem(Ic.Gauge, "Dashboard mode", "Big landscape gauges") { vm.overlay = "dash" },
+            ToolItem(Ic.Fuel, "Fuel log", "Real L/100 km and cost") { vm.overlay = "fuellog" },
+            ToolItem(Ic.Cash, "Repairs and costs", "History and receipts") { vm.overlay = "expenses" },
+            ToolItem(Ic.Cpu, "Parts register", "Fitted parts and warranty") { vm.overlay = "partsreg" },
+            ToolItem(Ic.Chart, "History and links", "Link events and faults") { vm.overlay = "timeline" },
+            ToolItem(Ic.Check, "Checklists", "Before a trip, summer") { vm.overlay = "checklist" },
+            ToolItem(Ic.Shield, "Inspection check", "Ready for the test?") { vm.overlay = "inspection" },
+        ),
+        "Adapter and sharing" to listOf(
+            ToolItem(Ic.Plug, "Adapter doctor", "Test the adapter") { vm.overlay = "doctor" },
+            ToolItem(Ic.Cpu, "Claude Lab", "Send logs, live data, tests") { vm.overlay = "lab" },
+            ToolItem(Ic.Terminal, "Console", "Raw commands and log") { vm.overlay = "console" },
+        ),
+    )
+    @Composable
+    fun Grid(items: List<ToolItem>, base: Int) {
         items.chunked(2).forEachIndexed { row, pair ->
-            Reveal(row) {
+            Reveal(base + row) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     for (t in pair) Tile(t.ic, t.title, t.sub, Modifier.weight(1f)) { t.open() }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
+        }
+    }
+    ScreenFrame("Tools", null, subtitle = "Start here") {
+        Grid(start, 0)
+        SoftButton(if (more) "Hide the other tools" else "More tools (${groups.sumOf { it.second.size }})") { more = !more }
+        if (more) for ((name, items) in groups) {
+            Label(name, bold = true, color = Brand.TextSecondary)
+            Grid(items, 0)
         }
     }
 }
@@ -547,6 +766,7 @@ fun CarScreen(vm: ObdyVm) {
                 Field("Year", year, { year = it }, number = true, modifier = Modifier.weight(1f))
                 Field("Mileage (km)", km, { km = it }, number = true, modifier = Modifier.weight(1f))
             }
+            Hint("Type the dash mileage once. After that Obdy keeps it up to date by itself (${vm.odoSource.label}), even for drives without the app.")
             Field("Engine (as on the car, optional)", engine, { engine = it })
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Field("Tank (L)", tank, { tank = it }, number = true, modifier = Modifier.weight(1f))

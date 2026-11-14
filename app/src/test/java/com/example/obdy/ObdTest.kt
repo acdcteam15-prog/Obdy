@@ -493,3 +493,17 @@ class DossierTest {
         assertTrue(out.contains(Dossier.NOTES_START))
     }
 }
+
+class GmlanTest {
+    @Test fun faultListFromSecondId() {
+        // GMLAN A9 81 answers come one code per frame from 5xx, not from the 6xx id the module normally answers from.
+        val r = ObdParse.parse("541 81 45 45 5A 2B 00 00 00\r541 81 C4 60 00 08 00 00 00\r541 81 00 00 00 FF 00 00 00\r\r>")
+        val rows = r.frames.filter { it.header == Gm.uudtId("641") && it.u(0) == 0x81 }
+        val list = DtcDecode.fromGmlanRows(rows)
+        assertEquals(2, list.size)
+        assertEquals("C0545-5A", list[0].code); assertEquals("active", list[0].kind)
+        assertEquals("U0460", list[1].code); assertEquals("history", list[1].kind)
+        assertEquals("5E8", Gm.uudtId("7E8"))
+        assertEquals("Body control (BCM)", Gm.nameForDiagAddress(0x40, "Module 241"))
+    }
+}

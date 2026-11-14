@@ -96,6 +96,11 @@ class Store(private val ctx: Context) {
         try { file("car.json").writeText(o.toString()) } catch (_: Exception) {}
     }
 
+    // ---- odometer anchor: km on the dash at the moment the car's own "distance since codes cleared" counter read d31
+    class OdoAnchor(val km: Int, val d31: Int, val timeMs: Long)
+    fun loadOdo(): OdoAnchor? = try { val o = JSONObject(file("odo.json").readText()); OdoAnchor(o.getInt("km"), o.getInt("d"), o.optLong("t")) } catch (_: Exception) { null }
+    fun saveOdo(a: OdoAnchor) { try { file("odo.json").writeText(JSONObject().put("km", a.km).put("d", a.d31).put("t", a.timeMs).toString()) } catch (_: Exception) {} }
+
     // ---- scan history
     private fun faultJson(f: Fault) = JSONObject().put("c", f.code).put("m", f.module).put("k", f.kind).put("s", f.status).put("r", f.raw)
     private fun faultOf(o: JSONObject) = Fault(o.getString("c"), o.optString("m"), o.optString("k", "stored"), o.optString("s"), o.optString("r"))

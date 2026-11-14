@@ -56,7 +56,52 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ car profile and settings
     var car by mutableStateOf(store.loadCar())
-    fun updateCar(c: Car) { car = c; store.saveCar(c); ObdyWidget.refresh(ctx) }
+    fun updateCar(c: Car) {
+        // A mileage typed by the owner (car settings, fill-up, service record) becomes the new reference for automatic tracking.
+        if (c.odometerKm != car.odometerKm && c.odometerKm > 0) {
+            store.saveOdo(Store.OdoAnchor(c.odometerKm, lastD31 ?: -1, System.currentTimeMillis()))
+            odoSource = if (lastD31 != null) OdoSource.Tracked else OdoSource.Manual
+        }
+        setCarQuiet(c)
+    }
+    private fun setCarQuiet(c: Car) { car = c; store.saveCar(c); ObdyWidget.refresh(ctx) }
+
+    // ------------------------------------------------------------------ mileage
+    /**
+     * This Malibu does not report the odometer itself (standard value A6 is not in its list: 0180 -> NO DATA). It does keep
+     * "distance since codes cleared" (value 31) in the engine computer, which counts every km even when Obdy is not running.
+     * So: the owner types the dash mileage once, Obdy notes the counter at that moment, and from then on
+     * mileage = typed km + (counter now - counter then). When codes are cleared the counter restarts and Obdy re-anchors.
+     * Cars that do report A6 use it directly.
+     */
+    enum class OdoSource(val label: String) { Car("from the car"), Tracked("tracked by the car's distance counter"), Manual("entered by you"), Unknown("not set") }
+    var odoSource by mutableStateOf(if (store.loadOdo()?.d31?.let { it >= 0 } == true) OdoSource.Tracked else OdoSource.Manual)
+    var lastD31 by mutableStateOf<Int?>(null)
+    var odoSyncMs by mutableStateOf(0L)
+
+    /** Call inside a coroutine while connected. Updates [car].odometerKm everywhere (service due, reports, widget, AI). */
+    suspend fun syncOdometer() {
+        if (conn != Conn.On) return
+        if (0xA6 in supported) {
+            val km = withCar { readPid(Pids.byId(0xA6)!!) }?.toInt()
+            if (km != null && km > 0) { odoSource = OdoSource.Car; odoSyncMs = System.currentTimeMillis(); if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km)); return }
+        }
+        if (0x31 !in supported) return
+        val d = withCar { readPid(Pids.byId(0x31)!!) }?.toInt() ?: return
+        lastD31 = d; odoSyncMs = System.currentTimeMillis()
+        if (car.odometerKm <= 0) { odoSource = OdoSource.Unknown; return }
+        val a = store.loadOdo()
+        when {
+            a == null || a.d31 < 0 -> store.saveOdo(Store.OdoAnchor(a?.km ?: car.odometerKm, d, System.currentTimeMillis()))
+            d >= a.d31 -> {
+                val km = a.km + (d - a.d31)
+                if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km))
+            }
+            else -> store.saveOdo(Store.OdoAnchor(car.odometerKm, d, System.currentTimeMillis()))   // codes were cleared: counter restarted
+        }
+        odoSource = OdoSource.Tracked
+    }
+    fun syncOdometerNow() { viewModelScope.launch { syncOdometer(); say("Mileage: ${car.odometerKm} km (${odoSource.label})") } }
     var symptoms by mutableStateOf(store.symptoms)
     fun saveSymptoms(s: String) { symptoms = s; store.symptoms = s }
     // ---- AI providers
@@ -180,6 +225,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 }
                 store.lastKind = kind; store.lastAddress = address
                 conn = Conn.On
+                chargeWarned = false; lowChargeSec = 0.0
+                try { syncOdometer() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
                 connStatus = "Connected: ${t.label}"
                 say("Connected. ${supported.size} live values available.")
                 coldPending = coldCapture
@@ -338,6 +385,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     val now = System.nanoTime()
                     val dt = (now - last) / 1e9; last = now
                     tripTick(dt)
+                    chargeTick(dt)
                     recTick((now - t0) / 1e9)
                     if (flightOn) flightTick(c)
                     if (now - lastTrail >= 1_000_000_000L && rawValues.isNotEmpty()) {
@@ -421,13 +469,38 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (a.km >= 0.05) {
             store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh, a.score ?: -1))
             trips = store.loadTrips()
-            updateCar(car.copy(odometerKm = car.odometerKm + Math.round(a.km).toInt()))
+            // With the car's counter available the mileage is exact; otherwise add the trip distance worked out from speed.
+            if (odoSource == OdoSource.Tracked || odoSource == OdoSource.Car) viewModelScope.launch { syncOdometer() }
+            else setCarQuiet(car.copy(odometerKm = car.odometerKm + Math.round(a.km).toInt()))
             say("Trip saved: ${Calc.fmt(a.km, 1)} km")
         }
     }
 
     fun deleteTrip(t: TripRecord) { store.deleteTrip(t.startMs); routeFile(t)?.delete(); trips = store.loadTrips() }
     fun routeFile(t: TripRecord): File? = File(store.routesDir(), "trip_${t.startMs}.gpx").takeIf { it.exists() }
+
+    // ------------------------------------------------------------------ charging watch
+    /**
+     * Engine running but the voltage stays low = the battery is not being charged. The 14 Nov 2026 session showed exactly this:
+     * 684-716 rpm at idle with 12.30-12.48 V for two minutes. Low voltage is the most common trigger of "Service Power Steering"
+     * on this car. GM's regulated voltage control may idle as low as about 12.6 V, so the warning only fires below 12.9 V held
+     * for 60 s, once per connection.
+     */
+    var chargeWarning by mutableStateOf<String?>(null)
+    private var lowChargeSec = 0.0
+    private var chargeWarned = false
+    private fun chargeTick(dt: Double) {
+        val rpm = liveValues[0x0C] ?: return
+        val v = liveValues[0x42] ?: return
+        if (rpm > 500 && v < 12.9) lowChargeSec += dt else lowChargeSec = 0.0
+        if (!chargeWarned && lowChargeSec >= 60) {
+            chargeWarned = true
+            chargeWarning = "Engine running but only ${Calc.fmt(v, 1)} V for a minute: the battery is not being charged properly. " +
+                "Low voltage is the most common cause of \"Service Power Steering\" on this Malibu. Run the Battery test (Tools)."
+            say("Charging looks low: ${Calc.fmt(v, 1)} V with the engine running")
+        }
+        if (v >= 13.2 && rpm > 500) chargeWarning = null
+    }
 
     private fun tripTick(dt: Double) {
         val a = tripAcc ?: return
@@ -514,14 +587,52 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private var foundModules: List<FoundModule> = emptyList()
     var foundCount by mutableStateOf(0)
 
-    /** [deep] also looks for ABS, airbag, body and other modules (about 15 seconds). */
+    /** One row per module from the last deep scan (kept when a quick scan follows). */
+    var moduleResults by mutableStateOf<List<ModuleResult>>(emptyList())
+    var lastDeepMs by mutableStateOf(0L)
+    /** 0..1 while a scan runs (null = no estimate). */
+    var scanFraction by mutableStateOf<Float?>(null)
+    var moduleInfo by mutableStateOf<Map<String, ModuleInfo>>(emptyMap())
+    var infoBusy by mutableStateOf<String?>(null)
+
+    /** Reads part numbers, programming date and the other identity items of one module (read only). */
+    fun readInfo(m: FoundModule) {
+        if (infoBusy != null || conn != Conn.On) { if (conn != Conn.On) say("Connect to the car first."); return }
+        infoBusy = m.probe.resp
+        viewModelScope.launch {
+            try { withCar { readModuleInfo(m) }?.let { moduleInfo = moduleInfo + (m.probe.resp to it) } } finally { infoBusy = null }
+        }
+    }
+
+    /** Re-reads the codes of one module only. */
+    fun rescanModule(m: FoundModule) {
+        if (scanBusy || conn != Conn.On) return
+        scanBusy = true; scanProgress = "Reading ${m.name}..."
+        viewModelScope.launch {
+            try {
+                val r = withCar { readModuleFaults(m, gmOnly = m.probe.resp == "7E8" || m.probe.resp == "7EA") } ?: return@launch
+                val oldKeys = moduleFaults.filter { it.module == m.name }.map { it.key }.toSet()
+                moduleFaults = moduleFaults.filter { it.module != m.name } + r.faults
+                moduleResults = moduleResults.map { if (it.module?.probe?.resp == m.probe.resp) r.result else it }
+                faults = (faults.filter { it.key !in oldKeys } + r.faults).distinctBy { it.key }
+                say("${m.name}: ${r.faults.size} code(s)")
+            } finally { scanBusy = false; scanProgress = "" }
+        }
+    }
+    private var moduleFaults: List<Fault> = emptyList()
+
+    /**
+     * [deep] also looks for ABS, airbag, body, steering and other modules (about 30 seconds). A quick scan only re-reads the
+     * engine and transmission and keeps the other modules' codes from the last deep scan (they used to be wiped, which also
+     * emptied the "module scan notes" in the AI bundle).
+     */
     fun scan(deep: Boolean) {
         if (scanBusy) return
         if (conn != Conn.On) { say("Connect to the car first."); return }
         scanBusy = true; scanProgress = "Reading the engine computer..."
         viewModelScope.launch {
             try {
-                val all = ArrayList<Fault>(); val notes = ArrayList<String>()
+                val all = ArrayList<Fault>()
                 val mon = withCar { readMonitors() }
                 scanProgress = "Reading fault codes..."
                 val obd = withCar { readObdFaults() } ?: return@launch
@@ -531,24 +642,44 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 voltage = withCar { voltage() } ?: voltage
                 warmups = if (0x30 in supported) withCar { readPid(Pids.byId(0x30)!!) }?.toInt() else null
                 distClear = if (0x31 in supported) withCar { readPid(Pids.byId(0x31)!!) }?.toInt() else null
+                syncOdometer()
+                var notes = scanNotes
                 if (deep) {
-                    foundModules = withCar { findModules { i, n, name -> scanProgress = "Looking for modules ($i/$n): $name" } } ?: emptyList()
+                    val n = ArrayList<String>(); val mf = ArrayList<Fault>(); val rows = ArrayList<ModuleResult>()
+                    scanProgress = "Asking every module to answer..."; scanFraction = 0.05f
+                    foundModules = withCar { findModules { i, t, name -> scanProgress = "Looking for modules ($i/$t): $name"; scanFraction = 0.05f + 0.45f * i / t } } ?: emptyList()
                     foundCount = foundModules.size
-                    for (m in foundModules) {
-                        if (m.probe.resp == "7E8" || m.probe.resp == "7EA") continue    // engine and transmission were read above
-                        scanProgress = "Reading ${m.probe.name}..."
-                        val r = withCar { readModuleFaults(m) } ?: continue
-                        all.addAll(r.faults); notes.addAll(r.notes)
+                    for ((i, m) in foundModules.withIndex()) {
+                        scanProgress = "Reading ${m.name} (${i + 1}/${foundModules.size})..."; scanFraction = 0.5f + 0.42f * i / maxOf(1, foundModules.size)
+                        // Engine and transmission: Mode 03/07/0A above, plus GM's own list (it can hold codes Mode 03 does not show).
+                        val engine = m.probe.resp == "7E8" || m.probe.resp == "7EA"
+                        val r = withCar { readModuleFaults(m, gmOnly = engine) } ?: continue
+                        mf.addAll(r.faults.filter { f -> all.none { it.code.take(5) == f.code.take(5) && it.module == f.module } })
+                        n.addAll(r.notes); rows.add(r.result)
                     }
-                    notes.add(0, "Modules that answered: " + (foundModules.joinToString { "${it.probe.name} [${it.probe.req}/${it.probe.resp}]" }.ifEmpty { "none besides the engine computer" }))
+                    // Last net: ask everyone at once for codes; anything from a module we did not read is added under its id.
+                    scanProgress = "Final check: any module with a code..."; scanFraction = 0.95f
+                    val bc = withCar { broadcastFaults() } ?: emptyMap()
+                    for ((id, frames) in bc) {
+                        val owner = foundModules.firstOrNull { Gm.uudtId(it.probe.resp) == id }
+                        val name = owner?.name ?: "Module (codes from $id)"
+                        val list = DtcDecode.fromGmlanRows(frames)
+                        val new = list.filter { d -> (all + mf).none { it.module == name && it.code == d.code } }
+                        for (d in new) mf.add(Fault(d.code, name, d.kind, d.status, d.raw))
+                        if (owner == null && list.isNotEmpty()) rows.add(ModuleResult(name, id, list.size, "GM broadcast"))
+                        if (new.isNotEmpty()) n.add("$name: ${new.size} more code(s) from the all-modules question ($id)")
+                    }
+                    n.add(0, "Modules that answered: " + (foundModules.joinToString { "${it.name} [${it.probe.req}/${it.probe.resp}]" }.ifEmpty { "none besides the engine computer" }))
+                    moduleFaults = mf; moduleResults = rows; lastDeepMs = System.currentTimeMillis(); notes = n
                 }
+                all.addAll(moduleFaults)
                 faults = all.distinctBy { it.key }; monitors = mon; freeze = fr; scanNotes = notes
                 lastScanMs = System.currentTimeMillis()
                 store.addScan(ScanRecord(lastScanMs, car.odometerKm, mon?.milOn, faults, voltage, notes.joinToString(" | ")))
                 scanHistory = store.loadScans()
                 say(if (faults.isEmpty()) "No fault codes found." else "${faults.size} fault code(s) found.")
             } finally {
-                scanBusy = false; scanProgress = ""
+                scanBusy = false; scanProgress = ""; scanFraction = null
             }
         }
     }
@@ -571,7 +702,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (m.probe.resp == "7E8" || m.probe.resp == "7EA") continue
                     withCar { clearModule(m) }?.let { results.add(it) }
                 }
-                scanNotes = results
+                scanNotes = results; moduleFaults = emptyList()
                 say("Clear command sent. Scanning again...")
                 scanBusy = false
                 scan(deep = foundModules.isNotEmpty())
@@ -732,6 +863,75 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
 
+    // ------------------------------------------------------------------ gearbox: shift and engagement recording
+    var gearBusy by mutableStateOf(false)
+    var gearMode by mutableStateOf("")
+    var gearSecs by mutableStateOf(0)
+    var gearMsg by mutableStateOf("")
+    var gearSamples by mutableStateOf<List<ShiftSample>>(emptyList())
+    var gearShifts by mutableStateOf<List<ShiftEvent>>(emptyList())
+    var gearEngage by mutableStateOf<List<Engagement>>(emptyList())
+    var gearExtra by mutableStateOf<String?>(null)
+    private var gearJob: Job? = null
+
+    /** Records engine speed and vehicle speed as fast as the adapter allows. [engage] = parked test (25 s), otherwise a drive (up to 4 minutes, until Stop). */
+    fun gearStart(engage: Boolean) {
+        if (gearBusy) return
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        val rpm = Pids.byId(0x0C) ?: return
+        val spd = Pids.byId(0x0D) ?: return
+        gearBusy = true; gearMode = if (engage) "parked, gear engagement" else "driving, shifts"
+        gearMsg = if (engage) "Recording 25 seconds. Foot on the brake: shift P to D, wait 5 s, D to P, wait 3 s, P to R, wait 5 s, R to P." else "Recording. Drive gently through the gears, then press Stop."
+        gearSamples = emptyList(); gearShifts = emptyList(); gearEngage = emptyList(); gearSecs = 0
+        stopLive()
+        gearJob = viewModelScope.launch {
+            val list = ArrayList<ShiftSample>()
+            val t0 = System.nanoTime()
+            var fails = 0
+            val limit = if (engage) 25.0 else 240.0
+            try {
+                while (currentCoroutineContext().isActive) {
+                    val t = (System.nanoTime() - t0) / 1e9
+                    if (t > limit) break
+                    gearSecs = t.toInt()
+                    val m = withCar { readPids(listOf(rpm, spd)) }
+                    val r = m?.get(0x0C); val v = m?.get(0x0D)
+                    if (r != null && v != null && v < 255.0) { list.add(ShiftSample(t, r, v)); fails = 0 }
+                    else { fails++; if (fails > 25) { gearMsg = "The car stopped answering. Turn the ignition on and try again."; break }; delay(60) }
+                    if (conn != Conn.On) break
+                }
+            } finally {
+                gearSamples = list.toList()
+                gearShifts = if (engage) emptyList() else ShiftAnalysis.shifts(list)
+                gearEngage = if (engage) ShiftAnalysis.engagements(list) else emptyList()
+                gearBusy = false
+                if (list.size >= 5) {
+                    val per = if (list.last().t > 0) list.size / list.last().t else 0.0
+                    gearMsg = "Done: ${list.size} readings (${ShiftAnalysis.fmt(per, 1)} per second)."
+                }
+                if (liveReasons.isNotEmpty() && conn == Conn.On) startLive()
+            }
+        }
+    }
+
+    fun gearStop() { gearJob?.cancel() }
+
+    /** Tries the GM gearbox values (read only) once. */
+    fun gearTryExtra() {
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        viewModelScope.launch {
+            val g = withCar { readGearExtra() } ?: return@launch
+            gearExtra = buildString {
+                if (g.tft != null) append("fluid temperature ${Calc.fmt(g.tft, 0)} °C (formula is a best guess)")
+                if (g.gear != null) { if (isNotEmpty()) append("; "); append("gear value ${g.gear} (meaning not confirmed)") }
+                if (isEmpty()) append("the car did not answer these GM values")
+                append(" [").append(g.raw).append("]")
+            }
+        }
+    }
+
+    fun gearReportText(): String = ShiftAnalysis.report(gearMode, gearSamples, gearShifts, gearEngage, gearExtra ?: "")
+
     // ------------------------------------------------------------------ Claude Lab: share logs, live data and tests with the AI
     var labDiagnose by mutableStateOf(true)
     var labBugs by mutableStateOf(true)
@@ -760,7 +960,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         for ((k, v) in extValues.toMap()) live.append("$k: ${Calc.fmt(v, 1)}\n")
         val carText = StringBuilder()
         carText.append("App: ${BuildConfig.VERSION_LABEL}\n")
-        carText.append("Car: ${car.name}, year ${car.year}, engine ${car.engine.ifBlank { "-" }}, VIN ${car.vin.ifBlank { "-" }}, mileage ${car.odometerKm} km\n")
+        carText.append("Car: ${car.name}, year ${car.year}, engine ${car.engine.ifBlank { "-" }}, VIN ${car.vin.ifBlank { "-" }}, mileage ${car.odometerKm} km (${odoSource.label}${lastD31?.let { "; distance since codes cleared $it km" } ?: ""})\n")
         if (car.notes.isNotBlank()) carText.append("Owner notes: ${car.notes}\n")
         carText.append("Connection: ${client?.label ?: "not connected"}; adapter: ${adapter?.name ?: "-"}; protocol: ${adapter?.protocol ?: "-"}; adapter voltage: ${voltage?.let { Calc.fmt(it, 1) + " V" } ?: "-"}\n")
         carText.append("Fast mode (several values per request): ${if (fastMode) (if (fastBroken) "on but not supported by this adapter" else "on") else "off"}; supported standard values: ${supported.size}\n")
@@ -779,8 +979,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             "LIVE TRAIL, one row per second, RAW values (CSV)" to Dossier.trailCsv(trail.toList()),
             "FAULTS, WARNING LIGHT, READINESS, FREEZE FRAME" to fx.toString(),
             "MODULE SCAN NOTES" to scanNotes.joinToString("\n").ifBlank { "(no module scan done)" },
+            "MODULE IDENTITY (service 1A, read only)" to moduleResults.joinToString("\n") { r ->
+                val info = r.module?.let { moduleInfo[it.probe.resp] }
+                "${r.name} [${r.ids}] codes=${r.codes ?: "no list"}" + (info?.items?.joinToString("") { "\n  ${it.first}: ${it.second}" } ?: " (identity not read)")
+            }.ifBlank { "(no deep scan yet)" },
             "ENGINE SELF-TESTS (Mode 06), decoded by the app" to Dossier.testsText(tests),
             "DISCOVERY PROBE (read-only)" to labProbe.joinToString("\n"),
+            "GEARBOX RECORDING (rpm and speed, shifts and engagement found by the app)" to (if (gearSamples.isEmpty()) "" else gearReportText()),
             "LOG: kept conversations (scans, self-tests, probes)" to AppLog.dumpKept().ifBlank { "(empty)" },
             "LOG: most recent traffic (includes live polling)" to AppLog.recent(250).ifBlank { "(empty)" },
         )

@@ -41,6 +41,7 @@ object Pids {
         p(0x33, "Barometric pressure", "kPa", 1, 0.0, 255.0) { it[0].toDouble() },
         p(0x3C, "Catalyst temperature B1S1", "°C", 2, -40.0, 900.0) { (256 * it[0] + it[1]) / 10.0 - 40 },
         p(0x3E, "Catalyst temperature B1S2", "°C", 2, -40.0, 900.0) { (256 * it[0] + it[1]) / 10.0 - 40 },
+        p(0xA6, "Odometer", "km", 4, 0.0, 2_000_000.0, "Total distance, straight from the car (newer cars only)") { ((it[0].toLong() shl 24) + (it[1].toLong() shl 16) + (it[2].toLong() shl 8) + it[3]) / 10.0 },
         p(0x42, "Battery / system voltage", "V", 2, 8.0, 16.0, "Engine off ≥ 12.4 V; running 13.5 to 14.8 V") { (256 * it[0] + it[1]) / 1000.0 },
         p(0x43, "Absolute load", "%", 2, 0.0, 300.0) { (256 * it[0] + it[1]) * 100.0 / 255 },
         p(0x44, "Commanded air/fuel (lambda)", "λ", 2, 0.0, 2.0, "1.00 = ideal mixture") { (256 * it[0] + it[1]) / 32768.0 },
