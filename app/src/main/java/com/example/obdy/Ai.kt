@@ -44,7 +44,7 @@ object Ai {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = "POST"
         c.connectTimeout = 20_000
-        c.readTimeout = 120_000
+        c.readTimeout = 240_000
         c.doOutput = true
         c.setRequestProperty("Content-Type", "application/json")
         for ((k, v) in headers) c.setRequestProperty(k, v)
@@ -128,7 +128,7 @@ object Ai {
         val content: Any = if (image == null) prompt else JSONArray()
             .put(JSONObject().put("type", "image").put("source", JSONObject().put("type", "base64").put("media_type", "image/jpeg").put("data", b64(image))))
             .put(JSONObject().put("type", "text").put("text", prompt))
-        val body = JSONObject().put("model", p.model).put("max_tokens", 3000)
+        val body = JSONObject().put("model", p.model).put("max_tokens", 8000)
             .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", content)))
         val (code, text) = post("https://api.anthropic.com/v1/messages", mapOf("x-api-key" to p.key, "anthropic-version" to "2023-06-01"), body)
         if (code !in 200..299) return AiResult(null, explain(p.name, code, errorText(text)), null)

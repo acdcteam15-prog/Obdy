@@ -466,3 +466,30 @@ class DtcBigTest {
         assertTrue(DtcDb.describe("P1999").startsWith("Manufacturer"))
     }
 }
+
+class DossierTest {
+    @Test fun notesAreExtracted() {
+        val reply = "1. CAR ...\n" + Dossier.NOTES_START + "\n- [bug] speed 255: SNA value\n- [idea] add GPS speed\n" + Dossier.NOTES_END + "\nthanks"
+        val n = Dossier.extractNotes(reply)!!
+        assertTrue(n.startsWith("- [bug]")); assertTrue(n.contains("GPS")); assertFalse(n.contains("thanks"))
+        assertNull(Dossier.extractNotes("no block here"))
+    }
+
+    @Test fun trailAndTests() {
+        val csv = Dossier.trailCsv(listOf(LiveSample(0.0, mapOf(0x0D to 255.0, 0x0C to 0.0)), LiveSample(1.0, mapOf(0x0C to 810.0))))
+        val rows = csv.lines()
+        assertEquals(3, rows.size)
+        assertTrue(rows[0].contains("Engine speed")); assertTrue(rows[0].contains("Vehicle speed"))
+        assertTrue(rows[1].endsWith("255.00")); assertTrue(rows[2].endsWith(","))   // speed missing in row 2
+        val t = Dossier.testsText(listOf(TestResult(0xA2, 0x0B, 0x24, 0, 0, 65535)))
+        assertTrue(t.contains("Misfire, cylinder 1")); assertTrue(t.contains("inside limits"))
+    }
+
+    @Test fun longLogsAreCutFirst() {
+        val big = (1..5000).joinToString("\n") { "line $it of a long adapter log" }
+        val out = Dossier.assemble(LabGoals(), "test", listOf("CAR" to "VIN XYZ", "LOG: recent" to big), maxChars = 40_000)
+        assertTrue(out.length < 45_000)
+        assertTrue(out.contains("VIN XYZ")); assertTrue(out.contains("line 5000 of")); assertFalse(out.contains("line 1 of"))
+        assertTrue(out.contains(Dossier.NOTES_START))
+    }
+}

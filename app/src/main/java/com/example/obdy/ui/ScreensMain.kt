@@ -169,6 +169,7 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "partsreg" -> PartsRegisterScreen(vm)
                     "quote" -> QuoteScreen(vm)
                     "checklist" -> ChecklistScreen(vm)
+                    "lab" -> LabScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -493,6 +494,7 @@ fun ToolsScreen(vm: ObdyVm) {
         ToolItem(Ic.Chart, "History and links", "Link events and faults") { vm.overlay = "timeline" },
         ToolItem(Ic.Chat, "Ask about your car", "Chat, photo, voice") { vm.overlay = "chat" },
         ToolItem(Ic.Search, "Find the cause", "Questions, then a fix") { vm.gCode = null; vm.overlay = "guided" },
+        ToolItem(Ic.Cpu, "Claude Lab", "Send logs, live data, tests") { vm.overlay = "lab" },
         ToolItem(Ic.Pin, "Where is the part?", "Diagram of the car") { vm.showParts(null) },
         ToolItem(Ic.Heart, "Health check", "Idle test and trends") { vm.overlay = "health" },
         ToolItem(Ic.Cpu, "Engine self-tests", "Misfire counts, catalyst") { vm.overlay = "tests" },

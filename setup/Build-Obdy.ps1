@@ -80,6 +80,7 @@ Say "   Repository: $repo" "Green"
 # ---- 4. save and upload
 Step "Saving and uploading your project"
 git config core.safecrlf false      # no "LF will be replaced by CRLF" warning for every file
+if (Test-Path (Join-Path $Root ".git\MERGE_HEAD")) { Say "   An earlier merge was left half-done. Undoing it." "Yellow"; git merge --abort *> $null }
 git add -A
 git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) {
@@ -91,8 +92,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 git push -u origin main 2>&1 | ForEach-Object { Say "   $_" }
 if ($LASTEXITCODE -ne 0) {
-    Say "   The upload was refused, trying to merge with what is on GitHub..." "Yellow"
-    git pull origin main --allow-unrelated-histories --no-edit 2>&1 | ForEach-Object { Say "   $_" }
+    # GitHub has newer commits (for example an icon change made with the AIy app). Bring them in; where both sides changed the
+    # same lines, the files you just sent win. Everything else from GitHub (icons, version number) is kept.
+    Say "   GitHub has newer changes (for example from AIy). Merging them in..." "Yellow"
+    git fetch origin main 2>&1 | ForEach-Object { Say "   $_" }
+    git merge origin/main -X ours --no-edit 2>&1 | ForEach-Object { Say "   $_" }
+    if ($LASTEXITCODE -ne 0) {
+        git merge --abort *> $null
+        Die "Could not merge with the newer changes on GitHub. Copy the lines above and send them to Claude."
+    }
+    # AIy raises the version number on GitHub: keep that one.
+    git checkout origin/main -- version.properties *> $null
+    git diff --cached --quiet
+    if ($LASTEXITCODE -ne 0) { git commit -q -m "Keep the version number from GitHub" }
     git push -u origin main 2>&1 | ForEach-Object { Say "   $_" }
     if ($LASTEXITCODE -ne 0) { Die "Could not upload to GitHub. Copy the lines above and send them to Claude." }
 }

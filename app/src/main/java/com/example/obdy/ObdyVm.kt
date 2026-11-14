@@ -294,13 +294,14 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     /** Stores one reading. Values a car sends as "no signal" (speed 255 km/h, 0.0 V system voltage) are shown as "--", not as a number. */
                     fun accept(p: Pid, v: Double) {
                         answered++; dead[p.id] = 0
+                        rawValues[p.id] = v
                         val invalid = (p.id == 0x0D && v >= 255.0) || (p.id == 0x42 && v <= 0.0)
                         if (p.id == 0x42) volt42Bad = invalid
                         if (invalid) { if (p.id != 0x42) liveValues.remove(p.id) } else liveValues[p.id] = v
                     }
                     fun missed(id: Int) {
                         val n = (dead[id] ?: 0) + 1; dead[id] = n
-                        if (n >= 3) liveValues.remove(id)      // never keep showing an old number
+                        if (n >= 3) { liveValues.remove(id); rawValues.remove(id) }      // never keep showing an old number
                     }
                     suspend fun single(p: Pid) {
                         val v = c.exclusive { readPid(p) }
@@ -339,6 +340,12 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     tripTick(dt)
                     recTick((now - t0) / 1e9)
                     if (flightOn) flightTick(c)
+                    if (now - lastTrail >= 1_000_000_000L && rawValues.isNotEmpty()) {
+                        lastTrail = now
+                        if (trail.isEmpty()) trailT0 = now
+                        trail.addLast(LiveSample((now - trailT0) / 1e9, HashMap(rawValues)))
+                        while (trail.size > 180) trail.removeFirst()
+                    }
                     cycle++
                     delay(15)
                 }
@@ -355,6 +362,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private val rawValues = HashMap<Int, Double>()
+    private val trail = ArrayDeque<LiveSample>()
+    private var trailT0 = 0L
+    private var lastTrail = 0L
     private var volt42Bad = false
     private var carSilent = false
 
@@ -719,6 +730,106 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             shareFile(f, "application/pdf")
         }
     }
+
+
+    // ------------------------------------------------------------------ Claude Lab: share logs, live data and tests with the AI
+    var labDiagnose by mutableStateOf(true)
+    var labBugs by mutableStateOf(true)
+    var labIdeas by mutableStateOf(true)
+    var labDiscover by mutableStateOf(true)
+    var labBusy by mutableStateOf(false)
+    var labProgress by mutableStateOf("")
+    var labReply by mutableStateOf<String?>(null)
+    var labError by mutableStateOf<String?>(null)
+    var labNotes by mutableStateOf<String?>(null)
+    var labProbe by mutableStateOf<List<String>>(emptyList())
+
+    /** The Claude service if one is added, otherwise the selected service. */
+    val labProvider: AiProvider? get() = providers.firstOrNull { it.type == AiType.Claude } ?: activeProvider
+
+    private fun labGoals() = LabGoals(labDiagnose, labBugs, labIdeas, labDiscover)
+
+    /** The whole bundle as text (the VIN and all details are included on purpose). */
+    fun labBundle(): String {
+        val live = StringBuilder()
+        for ((id, raw) in rawValues.toSortedMap()) {
+            val p = Pids.byId(id) ?: continue
+            val shown = liveValues[id]
+            live.append(p.name + " (01" + "%02X".format(id) + "): raw " + Calc.fmt(raw, 2) + " " + p.unit).append(" | app shows: ").append(shown?.let { Calc.fmt(it, 1) + " " + p.unit } ?: "--").append("\n")
+        }
+        for ((k, v) in extValues.toMap()) live.append("$k: ${Calc.fmt(v, 1)}\n")
+        val carText = StringBuilder()
+        carText.append("App: ${BuildConfig.VERSION_LABEL}\n")
+        carText.append("Car: ${car.name}, year ${car.year}, engine ${car.engine.ifBlank { "-" }}, VIN ${car.vin.ifBlank { "-" }}, mileage ${car.odometerKm} km\n")
+        if (car.notes.isNotBlank()) carText.append("Owner notes: ${car.notes}\n")
+        carText.append("Connection: ${client?.label ?: "not connected"}; adapter: ${adapter?.name ?: "-"}; protocol: ${adapter?.protocol ?: "-"}; adapter voltage: ${voltage?.let { Calc.fmt(it, 1) + " V" } ?: "-"}\n")
+        carText.append("Fast mode (several values per request): ${if (fastMode) (if (fastBroken) "on but not supported by this adapter" else "on") else "off"}; supported standard values: ${supported.size}\n")
+        val fx = StringBuilder()
+        if (faults.isEmpty()) fx.append("none read or none stored\n")
+        for (f in faults) fx.append("${f.code} [${f.kind}] ${f.module}: ${f.description} ${f.status}\n")
+        monitors?.let { m ->
+            fx.append("Warning light: ${if (m.milOn) "ON" else "off"}; codes counted by the engine computer: ${m.dtcCount}\n")
+            fx.append("Readiness: " + m.monitors.filter { it.supported }.joinToString(", ") { it.name + (if (it.complete) " done" else " NOT done") } + "\n")
+        }
+        freeze?.let { ff -> if (ff.code != null) { fx.append("Freeze frame for ${ff.code}: "); fx.append(ff.values.joinToString(", ") { (p, v) -> "${p.name} ${Calc.fmt(v, 1)} ${p.unit}" }); fx.append("\n") } }
+        val sections = listOf(
+            "CAR, APP AND ADAPTER" to carText.toString(),
+            "SYMPTOMS (owner)" to symptoms.trim(),
+            "LIVE VALUES NOW (raw from the car, and what the app shows)" to live.toString().ifBlank { "(none: the Live screen was not running)" },
+            "LIVE TRAIL, one row per second, RAW values (CSV)" to Dossier.trailCsv(trail.toList()),
+            "FAULTS, WARNING LIGHT, READINESS, FREEZE FRAME" to fx.toString(),
+            "MODULE SCAN NOTES" to scanNotes.joinToString("\n").ifBlank { "(no module scan done)" },
+            "ENGINE SELF-TESTS (Mode 06), decoded by the app" to Dossier.testsText(tests),
+            "DISCOVERY PROBE (read-only)" to labProbe.joinToString("\n"),
+            "LOG: kept conversations (scans, self-tests, probes)" to AppLog.dumpKept().ifBlank { "(empty)" },
+            "LOG: most recent traffic (includes live polling)" to AppLog.recent(250).ifBlank { "(empty)" },
+        )
+        return Dossier.assemble(labGoals(), BuildConfig.VERSION_LABEL, sections)
+    }
+
+    /** Runs the read-only discovery probe and keeps its answers for the next bundle. */
+    fun labRunProbe() {
+        if (labBusy) return
+        if (conn != Conn.On) { say("Connect to the car first."); return }
+        labBusy = true; labProgress = "Starting..."; labError = null
+        viewModelScope.launch {
+            try {
+                labProbe = withCar { discover { p -> labProgress = p } } ?: emptyList()
+                say("Discovery done: ${labProbe.size} lines kept for the next bundle.")
+            } catch (e: Exception) {
+                labError = "The probe stopped: ${e.message}"
+            } finally { labBusy = false; labProgress = "" }
+        }
+    }
+
+    fun labSend() {
+        if (labBusy) return
+        val p = labProvider
+        if (p == null) { labError = "Add an AI service (Anthropic Claude) in Settings first."; return }
+        labBusy = true; labProgress = "Sending to ${p.name}..."; labError = null
+        val text = labBundle()
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { Ai.ask(p, text, false) }
+            if (r.text != null) {
+                labReply = r.text; labNotes = Dossier.extractNotes(r.text)
+                store.addAi(AiRecord(System.currentTimeMillis(), "Claude Lab", r.text)); aiHistory = store.loadAi()
+            } else labError = r.error
+            labBusy = false; labProgress = ""
+        }
+    }
+
+    /** Saves the bundle as one text file and opens the share sheet (Claude app, e-mail, Drive...). */
+    fun labShareFile() {
+        viewModelScope.launch {
+            val f = withContext(Dispatchers.IO) {
+                val dir = File(ctx.filesDir, "reports").also { it.mkdirs() }
+                File(dir, "obdy_session_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date()) + ".txt").also { it.writeText(labBundle()) }
+            }
+            shareFile(f, "text/plain")
+        }
+    }
+
+    fun labShareNotes() { labNotes?.let { shareText("Obdy developer notes\n" + it) } }
 
     // ------------------------------------------------------------------ console
     val consoleOut = mutableStateListOf<String>()

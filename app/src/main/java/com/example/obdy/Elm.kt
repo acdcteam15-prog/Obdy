@@ -26,9 +26,18 @@ class ElmClient(private val transport: Transport) {
         transport.drain()
         transport.write(cmd)
         val r = transport.readUntilPrompt(timeoutMs)
-        AppLog.i(">> $cmd")
-        AppLog.i("<< " + r.replace('\r', ' ').replace('\n', ' ').trim())
+        val keep = !isPolling(cmd)
+        AppLog.i(">> $cmd", keep)
+        AppLog.i("<< " + r.replace('\r', ' ').replace('\n', ' ').trim(), keep)
         return r
+    }
+
+    /** Live polling (one value at a time, the manufacturer values and the header switches around them) is not kept in the long log. */
+    private fun isPolling(cmd: String): Boolean {
+        val c = cmd.uppercase()
+        if (c == "ATSH7E0" || c == "ATSH7E2" || c == "ATSH7DF") return true
+        if (c.startsWith("22") && c.length == 6) return true
+        return c.length in 4..12 && c.startsWith("01") && c !in setOf("0100", "0120", "0140", "0160", "0180", "0101")
     }
 
     suspend fun query(cmd: String, timeoutMs: Long = 3000): ElmReply = ObdParse.parse(raw(cmd, timeoutMs))
@@ -231,6 +240,38 @@ class ElmClient(private val transport: Transport) {
             onProgress("Reading test ${i + 1} of ${minOf(mids.size, 40)}")
             val r = query("06%02X".format(mid), 2500)
             for (f in r.frames) if (f.u(0) == 0x46 && f.u(1) == mid) out.addAll(Mode06.parse(f))
+        }
+        return out
+    }
+
+    /**
+     * Read-only discovery for the Claude Lab: what the car says it supports, the identity of every module that answers, and a
+     * few standard identification requests. Nothing here changes anything in the car. Returns "command -> answer" lines
+     * (the same lines are also kept in the log).
+     */
+    suspend fun discover(onProgress: (String) -> Unit): List<String> {
+        val out = ArrayList<String>()
+        fun clean(s: String) = s.replace(">", "").replace('\r', ' ').replace('\n', ' ').trim().replace(Regex("\\s+"), " ")
+        suspend fun ask(cmd: String, to: Long = 2500) { out.add("$cmd -> " + clean(raw(cmd, to))) }
+        onProgress("Adapter and protocol")
+        for (c in listOf("ATI", "ATDPN", "ATRV")) ask(c, 2000)
+        onProgress("Supported standard values")
+        for (c in listOf("0100", "0120", "0140", "0160", "0180", "01A0", "01C0")) ask(c, 3000)
+        onProgress("Standard information")
+        for (c in listOf("0101", "0103", "011C", "0113", "011D", "0900", "0902", "0904", "0906", "0908", "090A", "03", "07", "0A")) ask(c, 3000)
+        onProgress("Looking for other modules")
+        val mods = findModules { i, n, name -> onProgress("Module $i of $n: $name") }
+        out.add("MODULES THAT ANSWERED: " + mods.joinToString("; ") { "${it.probe.req}/${it.probe.resp} first=${it.firstAnswer}" }.ifBlank { "none" })
+        for ((i, m) in mods.withIndex()) {
+            onProgress("Identifying module ${i + 1} of ${mods.size}")
+            try {
+                aim(m.probe)
+                at("ATSTFF")
+                out.add("--- module ${m.probe.req}/${m.probe.resp} (${m.probe.name})")
+                for (c in listOf("1A90", "1AB0", "1ABB", "22F190", "22F187", "22F18A", "22F18C", "22F194", "22F1A0")) ask(c, 1200)
+            } finally {
+                try { aimReset(); at("ATST32") } catch (_: Exception) {}
+            }
         }
         return out
     }
