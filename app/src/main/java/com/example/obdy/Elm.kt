@@ -173,7 +173,7 @@ class ElmClient(private val transport: Transport) {
             // written in the notes so a module that stays silent can be diagnosed from the log.
             val tried = ArrayList<String>()
             var done = false
-            for (req in listOf("1902FF", "190208", "A98112", "A981FF")) {
+            for (req in listOf("1902FF", "190208", "A98112", "A981FF", "A98100", "A98012", "1800FF00", "170000")) {
                 val r = query(req, 2500)
                 val uds = r.frames.firstOrNull { it.u(0) == 0x59 }
                 val gm = r.frames.firstOrNull { it.u(0) == 0xE9 }
