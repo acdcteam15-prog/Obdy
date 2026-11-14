@@ -135,8 +135,13 @@ class ElmClient(private val transport: Transport) {
     suspend fun clearEmissionCodes(): Boolean = query("04", 6000).frames.any { it.u(0) == 0x44 }
 
     // ---------------------------------------------------------------- other modules (ABS, airbag, body ...)
-    private suspend fun aim(p: ModuleProbe) { at("ATSH${p.req}"); at("ATCRA${p.resp}") }
-    private suspend fun aimReset() { at("ATCRA"); at("ATSH7DF") }
+    private suspend fun aim(p: ModuleProbe) {
+        at("ATSH${p.req}"); at("ATCRA${p.resp}")
+        // Long answers from the GM body/chassis modules arrived as the first frame only (see the discovery probe log): answer the
+        // module's "send the rest" request ourselves, to the module's own address.
+        if (!p.req.startsWith("7E")) { at("ATFCSH${p.req}"); at("ATFCSD300000"); at("ATFCSM1") }
+    }
+    private suspend fun aimReset() { at("ATFCSM0"); at("ATCRA"); at("ATSH7DF") }
 
     /** Looks for modules that answer a "tester present" request. Slow (about 10 s), so call it with progress. */
     suspend fun findModules(onProgress: (Int, Int, String) -> Unit): List<FoundModule> {
@@ -164,25 +169,27 @@ class ElmClient(private val transport: Transport) {
         try {
             aim(m.probe)
             at("ATSTFF")      // GM body/chassis modules can need up to a second to answer (the default wait is 0.2 s)
-            val u = query("1902FF", 2500)
-            val ok = u.frames.firstOrNull { it.u(0) == 0x59 }
-            if (ok != null) {
-                val list = DtcDecode.fromUds(ok)
-                for ((c, st) in list) faults.add(Fault(c, name, "stored", st, ok.hex()))
-                notes.add("$name: ${list.size} code(s) (UDS)")
-            } else {
-                val g = query("A98112", 2500)
-                val ok2 = g.frames.firstOrNull { it.u(0) == 0xE9 }
-                if (ok2 != null) {
-                    val list = DtcDecode.fromGmlan(ok2)
-                    for ((c, st) in list) faults.add(Fault(c, name, "stored", st, ok2.hex()))
-                    notes.add("$name: ${list.size} code(s) (GM service A9)")
-                } else {
-                    val neg = (u.negatives() + g.negatives()).firstOrNull()
-                    val gm = if (g.frames.isEmpty()) "GM request A9: no answer" else "GM request A9: " + g.frames.joinToString(" | ") { it.hex() }
-                    notes.add("$name answers but did not give codes" + (neg?.let { " (${it.hex()})" } ?: "") + ". $gm. Raw: ${m.firstAnswer}")
+            // Ladder of read-only "which codes are stored" requests. The first one that gets a positive answer wins; every answer is
+            // written in the notes so a module that stays silent can be diagnosed from the log.
+            val tried = ArrayList<String>()
+            var done = false
+            for (req in listOf("1902FF", "190208", "A98112", "A981FF")) {
+                val r = query(req, 2500)
+                val uds = r.frames.firstOrNull { it.u(0) == 0x59 }
+                val gm = r.frames.firstOrNull { it.u(0) == 0xE9 }
+                if (uds != null) {
+                    val list = DtcDecode.fromUds(uds)
+                    for ((c, st) in list) faults.add(Fault(c, name, "stored", st, uds.hex()))
+                    notes.add("$name: ${list.size} code(s) (UDS $req)"); done = true; break
                 }
+                if (gm != null) {
+                    val list = DtcDecode.fromGmlan(gm)
+                    for ((c, st) in list) faults.add(Fault(c, name, "stored", st, gm.hex()))
+                    notes.add("$name: ${list.size} code(s) (GM $req), raw ${gm.hex()}"); done = true; break
+                }
+                tried.add("$req -> " + (if (r.frames.isEmpty()) "no answer" else r.frames.joinToString(" | ") { it.hex() }))
             }
+            if (!done) notes.add("$name answers but gave no codes. Tried: ${tried.joinToString("; ")}. First answer: ${m.firstAnswer}")
         } finally {
             try { aimReset(); at("ATST32") } catch (_: Exception) {}
         }
