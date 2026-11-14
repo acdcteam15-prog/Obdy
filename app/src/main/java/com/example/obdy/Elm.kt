@@ -280,6 +280,15 @@ class ElmClient(private val transport: Transport) {
                 try { aimReset(); at("ATST32") } catch (_: Exception) {}
             }
         }
+        // GM "all modules" (functional) question: id 101, no receive filter, so every module that answers shows up with its own id.
+        onProgress("Asking all modules at once (GM)")
+        try {
+            at("ATFCSM0"); at("ATCRA"); at("ATSH101"); at("ATSTFF")
+            out.add("--- broadcast 101 (read only, any module may answer)")
+            for (c in listOf("A98112", "A981FF", "A98100", "3E")) ask(c, 3500)
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
         return out
     }
 
