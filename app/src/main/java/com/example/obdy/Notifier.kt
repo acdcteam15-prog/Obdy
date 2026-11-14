@@ -34,4 +34,18 @@ object Notifier {
             .setContentIntent(open).setAutoCancel(true).build()
         try { ctx.getSystemService(NotificationManager::class.java).notify(1001, n) } catch (_: SecurityException) {}
     }
+
+    /** New fault codes found by the automatic scan on connect. */
+    fun newCodes(ctx: Context, lines: List<String>) {
+        if (lines.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val open = PendingIntent.getActivity(ctx, 1, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(ctx, CH)
+            .setSmallIcon(R.drawable.ic_stat_obdy)
+            .setContentTitle("New fault code" + if (lines.size > 1) "s" else "")
+            .setContentText(lines.joinToString(", "))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(lines.joinToString("\n")))
+            .setContentIntent(open).setAutoCancel(true).build()
+        try { ctx.getSystemService(NotificationManager::class.java).notify(1002, n) } catch (_: SecurityException) {}
+    }
 }

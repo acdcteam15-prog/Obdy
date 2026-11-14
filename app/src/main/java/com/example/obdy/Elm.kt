@@ -202,6 +202,28 @@ class ElmClient(private val transport: Transport) {
         return ModuleInfo(items, raw)
     }
 
+    /**
+     * Reads a list of read-only requests (22 xxxx / 1A xx) from one module. Returns request -> payload (bytes after the
+     * echo), or null payload when refused / silent. Used by the module explorer and the odometer finder.
+     */
+    suspend fun readModuleData(m: FoundModule, requests: List<String>, onProgress: (String) -> Unit = {}): List<Pair<String, IntArray?>> {
+        val out = ArrayList<Pair<String, IntArray?>>()
+        try {
+            aim(m.probe); at("ATST64")
+            for ((i, req) in requests.withIndex()) {
+                onProgress("${m.name}: ${i + 1}/${requests.size}")
+                val svc = req.substring(0, 2).toInt(16)
+                val echo = if (svc == 0x22) 3 else 2
+                val r = query(req, 1200)
+                val f = r.frames.firstOrNull { it.header == m.probe.resp && it.u(0) == svc + 0x40 }
+                out.add(req to f?.let { fr -> IntArray(maxOf(0, fr.data.size - echo)) { fr.u(it + echo) } })
+            }
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+        return out
+    }
+
     /** Looks for modules that answer a "tester present" request. Slow (about 10 s), so call it with progress. */
     suspend fun findModules(onProgress: (Int, Int, String) -> Unit): List<FoundModule> {
         // 1) Ask every module at once which diagnostic address it has (GM functional id 101, read only). This finds modules

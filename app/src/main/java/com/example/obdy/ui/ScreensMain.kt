@@ -6,6 +6,19 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -94,12 +107,21 @@ val LocalUpdateBadge = compositionLocalOf { false }
 
 @Composable
 fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().background(Brand.Header).padding(start = 6.dp, end = 6.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    val scroll = rememberScrollState()
+    // The big title shrinks as the page scrolls, and a shadow line appears under the header.
+    val k = (scroll.value / 160f).coerceIn(0f, 1f)
+    val titleSize = (27f - 7f * k).sp
+    Column(Modifier.fillMaxSize().background(Brand.BgDeep)) {
+        Row(
+            Modifier.fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(lerp(Brand.Header, Brand.Accent, 0.06f), Brand.Header)))
+                .padding(start = 6.dp, end = 6.dp, top = (14f - 6f * k).dp, bottom = (12f - 4f * k).dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (onBack != null) IconTap(Ic.Back, onBack) else Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, color = Brand.TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                if (subtitle.isNotEmpty()) Text(subtitle, color = Brand.TextSecondary, fontSize = 12.sp)
+                Text(title, color = Brand.TextPrimary, fontSize = titleSize, fontWeight = FontWeight.Bold, maxLines = 1)
+                if (subtitle.isNotEmpty() && k < 0.6f) Text(subtitle, color = Brand.TextSecondary.copy(alpha = 1f - k), fontSize = 12.sp, maxLines = 1)
             }
             actions()
             val openSettings = LocalOpenSettings.current
@@ -110,28 +132,47 @@ fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", act
                 }
             }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Brand.CardBorder))
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        Box(Modifier.fillMaxWidth().height(1.dp).background(lerp(Brand.CardBorder, Brand.Accent, 0.3f * k)))
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 
 @Composable
 fun BottomBar(vm: ObdyVm) {
     val items = listOf(Ic.Home to "Home", Ic.Gauge to "Live", Ic.Warning to "Faults", Ic.Wrench to "Tools", Ic.Car to "Car")
-    Row(Modifier.fillMaxWidth().background(Brand.Header).padding(horizontal = 6.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceAround) {
-        items.forEachIndexed { i, (ic, label) ->
-            val sel = vm.tab == i
-            val col by animateColorAsState(targetValue = if (sel) Brand.Accent else Brand.TextSecondary, animationSpec = tween(200), label = "navColor")
-            val pill by animateFloatAsState(targetValue = if (sel) 1f else 0f, animationSpec = tween(220), label = "navPill")
-            val src = remember { MutableInteractionSource() }
-            Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable(interactionSource = src, indication = null) { vm.tab = i }.padding(vertical = 3.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(Modifier.width(58.dp).height(30.dp).clip(RoundedCornerShape(15.dp)).background(Brand.Accent.copy(alpha = 0.18f * pill)), contentAlignment = Alignment.Center) {
-                    AppIcon(ic, size = 22.dp, color = col)
+    val haptic = LocalHapticFeedback.current
+    val pos by animateFloatAsState(targetValue = vm.tab.toFloat(), animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f), label = "navPos")
+    val badge = vm.visibleFaults.size
+    Box(Modifier.fillMaxWidth().background(Brand.BgDeep).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().graphicsLayer { shadowElevation = 18f; shape = RoundedCornerShape(26.dp); clip = true }
+                .clip(RoundedCornerShape(26.dp)).background(lerp(Brand.Header, Brand.Accent, 0.05f))
+                .border(1.dp, Brand.CardBorder, RoundedCornerShape(26.dp)).padding(6.dp),
+        ) {
+            val cell = maxWidth / items.size
+            // the sliding highlight behind the selected tab
+            Box(Modifier.offset(x = cell * pos).width(cell).height(54.dp).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(Brand.Accent.copy(alpha = 0.16f)))
+            Row(Modifier.fillMaxWidth()) {
+                items.forEachIndexed { i, (ic, label) ->
+                    val sel = vm.tab == i
+                    val col by animateColorAsState(targetValue = if (sel) Brand.Accent else Brand.TextSecondary, animationSpec = tween(200), label = "navColor")
+                    val lift by animateFloatAsState(targetValue = if (sel) 1f else 0f, animationSpec = spring(dampingRatio = 0.5f, stiffness = 500f), label = "lift")
+                    val src = remember { MutableInteractionSource() }
+                    Column(
+                        Modifier.weight(1f).height(54.dp).clip(RoundedCornerShape(20.dp))
+                            .clickable(interactionSource = src, indication = null) { if (vm.tab != i) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); vm.tab = i },
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                    ) {
+                        Box {
+                            AppIcon(ic, size = 22.dp, color = col, modifier = Modifier.graphicsLayer { translationY = -3f * lift; scaleX = 1f + 0.12f * lift; scaleY = 1f + 0.12f * lift })
+                            if (i == 2 && badge > 0) Box(
+                                Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-5).dp).size(17.dp).clip(CircleShape).background(Brand.Red),
+                                contentAlignment = Alignment.Center,
+                            ) { Text(if (badge > 9) "9+" else "$badge", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+                        }
+                        Text(label, color = col, fontSize = 11.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
+                    }
                 }
-                Text(label, color = col, fontSize = 11.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
             }
         }
     }
@@ -141,7 +182,16 @@ fun BottomBar(vm: ObdyVm) {
 fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
     CompositionLocalProvider(LocalOpenSettings provides { vm.overlay = "settings" }, LocalUpdateBadge provides (vm.updateReady != null)) {
     Box(Modifier.fillMaxSize()) {
-        Crossfade(targetState = vm.overlay ?: "main", animationSpec = tween(220), label = "screens") { ov ->
+        // Opening a tool slides it in from the right; going back slides it out (modern push navigation).
+        AnimatedContent(
+            targetState = vm.overlay ?: "main",
+            transitionSpec = {
+                val opening = targetState != "main"
+                (slideInHorizontally(tween(280)) { w -> if (opening) w / 3 else -w / 3 } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(tween(260)) { w -> if (opening) -w / 4 else w / 3 } + fadeOut(tween(180)))
+            },
+            label = "screens",
+        ) { ov ->
             if (ov != "main") {
                 BackHandler { vm.overlay = null }
                 when (ov) {
@@ -172,13 +222,25 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "checklist" -> ChecklistScreen(vm)
                     "lab" -> LabScreen(vm)
                     "gearbox" -> GearboxScreen(vm)
+                    "drive" -> DriveScreen(vm)
+                    "codehistory" -> CodeHistoryScreen(vm)
+                    "explorer" -> ExplorerScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
                 BackHandler(enabled = vm.tab != 0) { vm.tab = 0 }
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f)) {
-                        Crossfade(targetState = vm.tab, animationSpec = tween(200), label = "tabs") { t ->
+                        // Tabs slide toward the side of the tab you picked.
+                        AnimatedContent(
+                            targetState = vm.tab,
+                            transitionSpec = {
+                                val dir = if (targetState > initialState) 1 else -1
+                                (slideInHorizontally(tween(260)) { w -> dir * w / 5 } + fadeIn(tween(220))) togetherWith
+                                    (slideOutHorizontally(tween(220)) { w -> -dir * w / 5 } + fadeOut(tween(160)))
+                            },
+                            label = "tabs",
+                        ) { t ->
                             when (t) {
                                 0 -> HomeScreen(vm)
                                 1 -> LiveScreen(vm)
@@ -200,7 +262,7 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
         AnimatedVisibility(
             visible = toast != null, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 92.dp, start = 16.dp, end = 16.dp),
             enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
-        ) { Pill(keep.value, Brand.Accent) }
+        ) { ToastCard(keep.value) }
     }
     }
 }
@@ -237,7 +299,9 @@ private fun HeroCard(vm: ObdyVm) {
 
 @Composable
 fun HomeScreen(vm: ObdyVm) {
-    ScreenFrame("Obdy", null, subtitle = vm.car.name) {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    val greet = when (hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
+    ScreenFrame("Obdy", null, subtitle = "$greet · ${vm.car.name}" + if (vm.car.odometerKm > 0) " · %,d km".format(vm.car.odometerKm) else "") {
         val on = vm.conn == Conn.On
         Reveal(0) { HeroCard(vm) }
         vm.chargeWarning?.let { w -> Reveal(1) {
@@ -249,6 +313,16 @@ fun HomeScreen(vm: ObdyVm) {
                 SoftButton("Open the battery test", Modifier.fillMaxWidth()) { vm.overlay = "battery" }
             }
         } }
+        if (vm.newCodes.isNotEmpty()) Reveal(1) {
+            Panel(Modifier.clickable { vm.tab = 2 }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppIcon(Ic.Warning, size = 22.dp, color = Brand.Red); Title("New since last scan")
+                }
+                for (f in vm.newCodes.take(4)) Label("${f.code}  ${f.description}", size = 13)
+                Hint("Tap to open Faults.")
+            }
+        }
+        Reveal(1) { HealthDashboard(vm) }
         Reveal(1) { MileageCard(vm) }
         if (vm.updateReady != null) Reveal(1) {
             Panel {
@@ -274,7 +348,13 @@ fun HomeScreen(vm: ObdyVm) {
         Reveal(3) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Tile(Ic.Battery, "Battery test", "Start and charging", Modifier.weight(1f)) { vm.overlay = "battery" }
+                Tile(Ic.Car, "Driving mode", "Big gauges, alerts", Modifier.weight(1f), enabled = on) { vm.overlay = "drive" }
+            }
+        }
+        Reveal(3) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Tile(Ic.Doc, "PDF report", "For your mechanic", Modifier.weight(1f)) { vm.makeReport() }
+                Tile(Ic.Chart, "Code history", "When codes came and went", Modifier.weight(1f)) { vm.overlay = "codehistory" }
             }
         }
         if (vm.lastScanMs > 0) Reveal(4) {
@@ -343,10 +423,7 @@ fun LiveScreen(vm: ObdyVm) {
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-            if (vm.showExt) for (e in Gm.extPids) {
-                val v = vm.extValues[e.name]
-                Panel { Label(e.name, bold = true); Label(if (v == null) "no answer from the car" else Calc.fmt(v, 1) + " " + e.unit, color = if (v == null) Brand.TextSecondary else Brand.TextPrimary) }
-            }
+            if (vm.showExt) GearboxLiveCard(vm)
         }
     }
     if (pick) {
@@ -382,6 +459,14 @@ fun FaultsScreen(vm: ObdyVm) {
             GradientButton("Quick scan", Brand.MainBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(false) }
             GradientButton("Deep scan", Brand.AltBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true) }
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.autoScan, onCheckedChange = { vm.changeAutoScan(it) }); Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) { Label("Quick scan every time I connect", size = 13, bold = true); Hint("Notifies you only when a NEW code appears.") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.deepMode06, onCheckedChange = { vm.changeDeepMode06(it) }); Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) { Label("Deep scan reads engine self-tests too", size = 13, bold = true); Hint("Misfire counts, catalyst and O2 sensor results (adds about 10 s).") }
+        }
         Hint("Quick: engine and transmission (a few seconds). Deep: also brakes, airbag, body, steering and every other module that answers (about 30 seconds).")
         if (!on) Panel { Label("Not connected."); SoftButton("Connect to the car") { vm.overlay = "connect" } }
         if (vm.scanBusy) Panel {
@@ -392,6 +477,7 @@ fun FaultsScreen(vm: ObdyVm) {
             }
             ScanBar(vm.scanFraction)
             Hint(vm.scanProgress)
+            Shimmer(3)
         }
 
         if (vm.lastScanMs > 0 && !vm.scanBusy) {
@@ -405,6 +491,20 @@ fun FaultsScreen(vm: ObdyVm) {
             for ((module, list) in vm.visibleFaults.groupBy { it.module }) {
                 Text("$module  ·  ${list.size}", color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 for (f in list) FaultCard(vm, f, open == f.key, { open = if (open == f.key) null else f.key })
+            }
+            if (vm.testsRead) {
+                val bad = vm.tests.count { !it.pass }
+                Panel(Modifier.clickable { vm.overlay = "tests" }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AppIcon(Ic.Cpu, size = 20.dp, color = if (bad > 0) Brand.Amber else Brand.Green)
+                        Column(Modifier.weight(1f)) {
+                            Title("Engine self-tests")
+                            Hint("${vm.tests.size} results read (Mode 06)  ·  " + if (bad == 0) "all within limits" else "$bad outside limits")
+                        }
+                        Text("Open", color = Brand.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    for (t in vm.tests.filter { !it.pass }.take(3)) Hint("•  ${t.name}: ${t.value} (limits ${t.min}–${t.max})")
+                }
             }
             if (vm.moduleResults.isNotEmpty()) ModulesPanel(vm)
             if (vm.hiddenFaults.isNotEmpty()) Panel {
@@ -496,6 +596,9 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Spacer(Modifier.height(2.dp))
                 kindText(f.kind)?.let { Label(it, color = Brand.Blue, size = 13) }
+                vm.storyFor(f)?.let { st ->
+                    Label("History: first seen ${fmtDate(st.firstMs)}" + (if (st.firstKm > 0) " at %,d km".format(st.firstKm) else "") + "  ·  in ${st.seen} scan(s)" + (if (st.returns > 0) "  ·  came back ${st.returns}×" else ""), color = if (st.returns > 0) Brand.Amber else Brand.TextSecondary, size = 12)
+                }
                 Label(DtcDb.severityText(sev), color = c, size = 13)
                 Label(DtcDb.system(f.code), color = Brand.TextSecondary, size = 12)
                 val causes = DtcDb.causes(f.code)
@@ -506,7 +609,14 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
                 Manual.noteForCode(f.code)?.let { Label("From your manual", bold = true, size = 13); Hint(it) }
                 FuseCodeChips(vm, f.code)
                 vm.linkFor(f.code)?.let { l -> Label("Possible link: appeared ${l.gapDays} day(s) after \"${l.cause.title}\"", color = Brand.Amber, size = 13) }
-                if (f.raw.isNotBlank()) Hint("Raw: ${f.raw}")
+                val bits = DtcDb.statusBits(f.status)
+                if (bits.isNotEmpty() || f.raw.isNotBlank() || f.code.contains('-')) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brand.Track).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Technical", color = Brand.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    if (f.code.contains('-')) Text("Failure type ${f.code.substringAfter('-')}: the module's sub-code for HOW it failed (circuit low/high, signal invalid, internal...)", color = Brand.TextPrimary, fontSize = 12.sp)
+                    if (bits.isNotEmpty()) Text("Status: " + bits.joinToString(", "), color = Brand.TextPrimary, fontSize = 12.sp)
+                    Text("Module: ${f.module}  ·  type: ${f.kind}", color = Brand.TextPrimary, fontSize = 12.sp)
+                    if (f.raw.isNotBlank()) Text("Raw: ${f.raw}", color = Brand.TextSecondary, fontSize = 11.sp)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SoftButton("Where is it?", Modifier.weight(1f)) { vm.showParts(f.code) }
                     SoftButton("Find the cause", Modifier.weight(1f)) { vm.startGuided(f.code); vm.overlay = "guided" }
@@ -615,6 +725,7 @@ private fun ModulesPanel(vm: ObdyVm) {
                             SoftButton(if (vm.infoBusy == m.probe.resp) "Reading..." else if (info == null) "Read identity" else "Read again", Modifier.weight(1f), enabled = vm.infoBusy == null && vm.conn == Conn.On) { vm.readInfo(m) }
                             SoftButton("Rescan codes", Modifier.weight(1f), enabled = !vm.scanBusy && vm.conn == Conn.On) { vm.rescanModule(m) }
                         }
+                        if (m != null) SoftButton(if (vm.explorerBusy == m.probe.resp) "Exploring..." else "Explore all its data", Modifier.fillMaxWidth(), enabled = vm.explorerBusy == null && vm.conn == Conn.On) { vm.exploreModule(m); vm.overlay = "explorer" }
                     }
                 }
             }
@@ -658,6 +769,7 @@ private fun MileageCard(vm: ObdyVm) {
             val (c, t) = when (vm.odoSource) {
                 ObdyVm.OdoSource.Car -> Brand.Green to "live"
                 ObdyVm.OdoSource.Tracked -> Brand.Green to "auto"
+                ObdyVm.OdoSource.Module -> Brand.Green to "module"
                 ObdyVm.OdoSource.Manual -> Brand.Amber to "manual"
                 ObdyVm.OdoSource.Unknown -> Brand.TextSecondary to "not set"
             }
@@ -675,6 +787,87 @@ private fun MileageCard(vm: ObdyVm) {
             val next = vm.dueList().filter { it.kmLeft != null }.minByOrNull { it.kmLeft!! }
             if (next != null) Label(if (next.kmLeft!! < 0) "${next.item.name}: overdue by %,d km".format(-next.kmLeft) else "Next: ${next.item.name} in %,d km".format(next.kmLeft), color = if (next.kmLeft < 0) Brand.Red else if (next.kmLeft <= 500) Brand.Amber else Brand.TextPrimary, size = 14)
             if (on) SoftButton("Update from the car", Modifier.fillMaxWidth()) { vm.syncOdometerNow() }
+        }
+    }
+}
+
+@Composable
+private fun HealthDashboard(vm: ObdyVm) {
+    val h = vm.carHealth()
+    val col = levelColor(h.level)
+    val anim by animateFloatAsState(targetValue = h.score / 100f, animationSpec = tween(1100), label = "health")
+    var open by remember { mutableStateOf(false) }
+    Panel(Modifier.clickable { open = !open }) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Box(Modifier.size(86.dp), contentAlignment = Alignment.Center) {
+                val track = Brand.Track
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val sw = 9.dp.toPx()
+                    drawArc(track, 135f, 270f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    drawArc(col, 135f, 270f * anim, false, style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("${(anim * 100).toInt()}", color = Brand.TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("health", color = Brand.TextSecondary, fontSize = 10.sp)
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(h.headline, color = Brand.TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                for (f in h.factors.take(if (open) 10 else 3)) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
+                    Dot(levelColor(f.level)); Spacer(Modifier.width(6.dp))
+                    Text(f.name, color = Brand.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    if (f.penalty > 0) Text("−${f.penalty}", color = levelColor(f.level), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        AnimatedVisibility(visible = open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { for (f in h.factors) Hint("${f.name}: ${f.text}") }
+        }
+        if (!open) Hint("Tap for details")
+    }
+}
+
+@Composable
+private fun GearboxLiveCard(vm: ObdyVm) {
+    val tft = vm.extValues["Transmission fluid temp (GM)"]
+    val gear = vm.extValues["Current gear (GM)"]
+    val oil = vm.extValues["Engine oil life (GM)"]
+    if (tft == null && gear == null && oil == null) { Hint("GM extra values (gearbox temperature, gear, oil life): waiting for the car..."); return }
+    Panel {
+        Title("Gearbox and oil (GM values)")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BigStat("Gear", gear?.let { if (it == 0.0) "N/P" else it.toInt().toString() } ?: "--", Brand.Accent, Modifier.weight(1f))
+            BigStat("Fluid", tft?.let { Calc.fmt(it, 0) + " °C" } ?: "--", tft?.let { if (it >= 115) Brand.Red else if (it >= 100) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
+            BigStat("Oil life", oil?.let { Calc.fmt(it, 0) + " %" } ?: "--", oil?.let { if (it < 15) Brand.Red else if (it < 30) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
+        }
+        Hint("Gearbox fluid: normal 70–95 °C, over 110 °C when working hard is too hot (slow down, avoid kick-down).")
+    }
+}
+
+@Composable
+fun BigStat(label: String, value: String, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).background(color.copy(alpha = 0.10f)).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = Brand.TextSecondary, fontSize = 11.sp)
+        AnimatedContent(targetState = value, label = "stat") { v -> Text(v, color = color, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun OdoFinderPanel(vm: ObdyVm) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brand.Track).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Label("Read the odometer from a module", bold = true, size = 13)
+        Hint("Your car does not send the odometer as a standard value. Obdy can look inside every module (read only) for a number that matches the mileage you typed. Needs a Deep scan first.")
+        if (vm.odoSource == ObdyVm.OdoSource.Module) {
+            Label("In use: mileage is read from a module.", color = Brand.Green, size = 13)
+            SoftButton("Stop using it", Modifier.fillMaxWidth()) { vm.forgetOdoModule() }
+        } else SoftButton(if (vm.explorerBusy == "odo") "Searching... ${vm.scanProgress}" else "Search the modules", Modifier.fillMaxWidth(), enabled = vm.explorerBusy == null && vm.conn == Conn.On) { vm.findOdometer() }
+        if (vm.odoSearchDone && vm.odoCandidates.isEmpty()) Hint("No match. The odometer is probably kept in the instrument cluster on a request Obdy does not know yet; the distance-counter tracking keeps working.")
+        for (c in vm.odoCandidates.take(6)) Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("%,d km".format(c.value.toInt()), color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("${c.module} · ${c.request} · bytes ${c.offset}+${c.len}${if (c.miles) " · miles" else ""}", color = Brand.TextSecondary, fontSize = 11.sp)
+            }
+            SoftButton("Use") { vm.useOdoCandidate(c) }
         }
     }
 }
@@ -767,6 +960,7 @@ fun CarScreen(vm: ObdyVm) {
                 Field("Mileage (km)", km, { km = it }, number = true, modifier = Modifier.weight(1f))
             }
             Hint("Type the dash mileage once. After that Obdy keeps it up to date by itself (${vm.odoSource.label}), even for drives without the app.")
+            OdoFinderPanel(vm)
             Field("Engine (as on the car, optional)", engine, { engine = it })
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Field("Tank (L)", tank, { tank = it }, number = true, modifier = Modifier.weight(1f))

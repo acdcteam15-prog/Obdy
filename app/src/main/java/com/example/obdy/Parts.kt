@@ -1,58 +1,87 @@
 package com.example.obdy
 
 /** Where things are on the car. Rectangles are fractions (left, top, right, bottom) of a top view with the front at the top. */
-enum class Zone(val label: String, val l: Float, val t: Float, val r: Float, val b: Float) {
-    Radiator("Radiator and cooling fans (very front)", 0.28f, 0.03f, 0.72f, 0.075f),
-    Intake("Air intake and air filter box", 0.30f, 0.085f, 0.70f, 0.14f),
-    EngineTop("Top of the engine", 0.33f, 0.15f, 0.67f, 0.29f),
-    BayLeft("Engine bay, driver side", 0.19f, 0.09f, 0.31f, 0.31f),
-    BayRight("Engine bay, passenger side", 0.69f, 0.09f, 0.81f, 0.31f),
-    EngineLow("Lower engine and transmission", 0.36f, 0.30f, 0.64f, 0.385f),
-    UnderDash("Under the dashboard, driver side", 0.21f, 0.40f, 0.49f, 0.47f),
-    Cabin("Cabin, seats and centre console", 0.21f, 0.48f, 0.79f, 0.69f),
-    FuelTank("Fuel tank (under the rear seat)", 0.33f, 0.70f, 0.67f, 0.79f),
-    Trunk("Boot (trunk)", 0.26f, 0.80f, 0.74f, 0.93f),
-    ExhaustFront("Exhaust: manifold, catalytic converter, front sensors", 0.45f, 0.39f, 0.55f, 0.50f),
-    ExhaustRear("Exhaust: middle pipe and silencer", 0.45f, 0.70f, 0.55f, 0.97f),
-    WheelFL("Front left wheel", 0.04f, 0.10f, 0.15f, 0.23f),
-    WheelFR("Front right wheel", 0.85f, 0.10f, 0.96f, 0.23f),
-    WheelRL("Rear left wheel", 0.04f, 0.72f, 0.15f, 0.85f),
-    WheelRR("Rear right wheel", 0.85f, 0.72f, 0.96f, 0.85f),
+/**
+ * Where things are on the car, as a top view with the FRONT AT THE TOP and the driver (left-hand drive) on the LEFT.
+ * Rectangles are fractions (left, top, right, bottom) of the drawing. The zones do not overlap, except underbody parts
+ * (marked [under]) which sit below the cabin in a top view. Layout for the 2013 Malibu 2.5 L: transverse engine, intake
+ * manifold facing the radiator, exhaust and catalyst at the back of the engine (firewall side), gearbox on the driver side,
+ * timing chain and drive belt on the passenger side.
+ */
+enum class Zone(val label: String, val l: Float, val t: Float, val r: Float, val b: Float, val under: Boolean = false) {
+    Radiator("Radiator, condenser and cooling fans (very front)", 0.24f, 0.035f, 0.76f, 0.075f),
+    BayLeft("Engine bay, driver side front: battery, fuse box, air filter box", 0.19f, 0.085f, 0.36f, 0.175f),
+    Intake("Front of the engine: intake manifold and throttle body", 0.36f, 0.085f, 0.66f, 0.15f),
+    EngineTop("Top of the engine: coils, spark plugs, injectors", 0.36f, 0.15f, 0.66f, 0.225f),
+    TimingEnd("Passenger end of the engine: timing chain, cam solenoids, drive belt, alternator", 0.66f, 0.085f, 0.81f, 0.27f),
+    Gearbox("Gearbox (6-speed automatic) and its control module", 0.19f, 0.175f, 0.36f, 0.27f),
+    ExhaustSide("Back of the engine (firewall side): exhaust manifold, catalyst, front O2 sensor", 0.36f, 0.225f, 0.66f, 0.30f),
+    Firewall("Driver side at the firewall: brake master cylinder and ABS module", 0.19f, 0.27f, 0.36f, 0.33f),
+    Cowl("Under the windscreen (cowl), passenger side: wiper motor, cabin air intake", 0.55f, 0.30f, 0.81f, 0.335f),
+    EngineLow("Underneath the engine: oil pan, crank sensor, knock sensor", 0.40f, 0.30f, 0.55f, 0.36f, true),
+    Steering("Steering column under the dash: power steering motor and sensors", 0.25f, 0.38f, 0.40f, 0.47f),
+    UnderDash("Under the dashboard, driver side: OBD port, body control module", 0.40f, 0.38f, 0.52f, 0.47f),
+    Dash("Dashboard centre and passenger side: radio, climate, glove box", 0.52f, 0.38f, 0.78f, 0.47f),
+    Cabin("Cabin floor and centre console: airbag module, seats", 0.21f, 0.48f, 0.79f, 0.67f),
+    ExhaustMid("Underneath the cabin: middle exhaust pipe, rear O2 sensor", 0.46f, 0.36f, 0.54f, 0.48f, true),
+    FuelTank("Fuel tank and pump (under the rear seat)", 0.30f, 0.68f, 0.70f, 0.78f, true),
+    Trunk("Boot (trunk): fuel pump module, spare wheel", 0.26f, 0.79f, 0.74f, 0.93f),
+    ExhaustRear("Exhaust silencer and tail pipe", 0.44f, 0.935f, 0.56f, 0.975f, true),
+    WheelFL("Front left wheel", 0.04f, 0.10f, 0.16f, 0.24f),
+    WheelFR("Front right wheel", 0.84f, 0.10f, 0.96f, 0.24f),
+    WheelRL("Rear left wheel", 0.04f, 0.71f, 0.16f, 0.85f),
+    WheelRR("Rear right wheel", 0.84f, 0.71f, 0.96f, 0.85f),
 }
 
-class PartInfo(val name: String, val zone: Zone, val where: String, val tip: String = "")
+class PartInfo(val name: String, val zone: Zone, val where: String, val tip: String = "", val category: String = "Engine")
 
 object Parts {
-    private val spark = PartInfo("Spark plugs and ignition coils", Zone.EngineTop, "Under the plastic cover on top of the engine: one coil sits on each spark plug. Cylinder 1 is usually at the drive-belt end of the engine.", "Swap a coil with the next cylinder and see if the code follows it.")
-    private val maf = PartInfo("Air flow sensor (MAF)", Zone.Intake, "In the air intake tube between the air filter box and the throttle body.", "Clean only with MAF cleaner. Never touch the wire.")
-    private val airbox = PartInfo("Air filter box and filter", Zone.Intake, "Black plastic box at the front of the engine bay, joined to the intake tube by clips.", "A clogged filter and loose intake clamps cause lean and air flow codes.")
-    private val throttle = PartInfo("Throttle body", Zone.EngineTop, "Where the air intake tube joins the engine's intake manifold.", "Clean with throttle-body cleaner, then do the idle relearn (Tools > Relearn guides).")
-    private val map = PartInfo("Manifold pressure sensor (MAP)", Zone.EngineTop, "Small sensor bolted on or into the intake manifold.")
-    private val purge = PartInfo("EVAP purge valve", Zone.EngineTop, "Small valve with two hoses near the intake manifold or valve cover.", "Listen for a click when the ignition turns on, or test with a hand vacuum pump.")
-    private val evapCanister = PartInfo("EVAP canister and vent valve", Zone.FuelTank, "Near the fuel tank at the rear underneath the car.", "Often fails from dirt or water; check hoses first.")
-    private val cap = PartInfo("Fuel cap and filler neck", Zone.Trunk, "Behind the fuel flap at the rear of the car.", "Tighten until it clicks. A cracked seal causes EVAP codes.")
-    private val fuelPump = PartInfo("Fuel pump and fuel filter", Zone.FuelTank, "Inside the fuel tank. Access is usually under the rear seat cushion.", "Check fuel pressure before replacing it.")
-    private val injectors = PartInfo("Fuel injectors", Zone.EngineTop, "In the intake manifold, one per cylinder, under the engine cover.")
-    private val upstreamO2 = PartInfo("Upstream oxygen sensor (before the catalyst)", Zone.ExhaustFront, "Screwed into the exhaust manifold or front pipe, close to the engine.", "Let the exhaust cool first: the thread seizes easily.")
-    private val downstreamO2 = PartInfo("Downstream oxygen sensor (after the catalyst)", Zone.ExhaustFront, "In the exhaust pipe just behind the catalytic converter, under the car.")
-    private val cat = PartInfo("Catalytic converter", Zone.ExhaustFront, "Metal canister in the exhaust pipe under the front of the car, behind the engine.", "Check for exhaust leaks and earlier misfires before replacing it.")
-    private val vvt = PartInfo("Cam timing solenoid (VVT) and oil level", Zone.EngineTop, "Solenoids are on the valve cover; the oil dipstick is at the front of the engine.", "Check the oil level and grade first.")
-    private val crank = PartInfo("Crankshaft and camshaft sensors", Zone.EngineLow, "Crank sensor: low on the engine block where it meets the transmission. Cam sensors: on the cylinder head.")
-    private val coolantSensor = PartInfo("Thermostat and coolant temperature sensor", Zone.EngineTop, "On the coolant outlet housing at the side of the engine; check the coolant level in the reservoir first.")
+    private val spark = PartInfo("Spark plugs and ignition coils", Zone.EngineTop, "Under the plastic engine cover on top of the engine: one coil pack sits over the four plugs (or one coil per plug). Cylinder 1 is at the passenger (timing chain) end.", "Swap coils between cylinders and see if the misfire code follows.")
+    private val maf = PartInfo("Air flow sensor (MAF / IAT)", Zone.BayLeft, "Plugged into the air intake duct right after the air filter box, driver side front.", "Clean only with MAF cleaner spray. Never touch the sensing wire.")
+    private val airbox = PartInfo("Air filter box and intake duct", Zone.BayLeft, "Black plastic box at the driver side front of the engine bay; the duct runs to the throttle body.", "Cracked duct or loose clamps cause lean codes (P0171) and air flow codes.")
+    private val throttle = PartInfo("Electronic throttle body", Zone.Intake, "On the driver end of the intake manifold, at the front of the engine, where the intake duct connects.", "Clean with throttle-body cleaner (ignition off), then do the idle relearn in Tools.")
+    private val map = PartInfo("Manifold pressure sensor (MAP)", Zone.Intake, "Small sensor plugged into the intake manifold at the front of the engine.")
+    private val purge = PartInfo("EVAP purge solenoid", Zone.Intake, "On or near the intake manifold at the front of the engine, with a thin hose to the manifold and one going back to the canister.", "It should click when commanded; a stuck-open valve causes hard starting after refuelling.")
+    private val evapCanister = PartInfo("EVAP canister and vent valve", Zone.FuelTank, "Under the car next to the fuel tank, near the rear axle.", "Check its hoses and the vent filter for dirt or water first.", "Fuel")
+    private val cap = PartInfo("Fuel cap and filler neck", Zone.WheelRL, "Behind the fuel flap above the rear wheel.", "Tighten until it clicks. A worn seal is the cheapest EVAP fix.", "Fuel")
+    private val fuelPump = PartInfo("Fuel pump and level sender", Zone.FuelTank, "Inside the fuel tank, reached from an access cover under the rear seat cushion or by lowering the tank.", "This car has a fuel pressure sensor (value 0A on Live): check pressure before replacing the pump.", "Fuel")
+    private val fpcm = PartInfo("Fuel pump control module (FPCM)", Zone.Trunk, "The module that answers as 7E3/7EB. On this generation it is usually in the rear: trunk side trim or near the tank. Check the trim on the left side of the boot.", "Corroded connector = fuel pressure and pump codes.", "Fuel")
+    private val injectors = PartInfo("Fuel injectors and fuel rail", Zone.EngineTop, "Under the engine cover, in the intake side of the head, one per cylinder.")
+    private val upstreamO2 = PartInfo("Front oxygen sensor (sensor 1)", Zone.ExhaustSide, "At the BACK of the engine (firewall side), screwed into the exhaust manifold / catalyst inlet. Easiest from above after removing the heat shield.", "Let the exhaust cool fully: hot threads strip.")
+    private val downstreamO2 = PartInfo("Rear oxygen sensor (sensor 2)", Zone.ExhaustMid, "Under the car, in the exhaust pipe just after the catalytic converter, below the front of the cabin.")
+    private val cat = PartInfo("Catalytic converter", Zone.ExhaustSide, "Close-coupled: bolted right on the exhaust manifold at the back of the engine.", "Rule out misfires, exhaust leaks and a lazy rear O2 sensor before replacing it.")
+    private val vvt = PartInfo("Cam phaser solenoids (VVT), intake and exhaust", Zone.TimingEnd, "On top of the cylinder head at the timing-chain end (passenger side), each with a 2-pin connector. The intake one is toward the front of the car.", "For P0011/P0014: check oil level and change oil first (dirty or low oil is the most common cause), then the solenoid connector and the solenoid screen.")
+    private val timing = PartInfo("Timing chain, tensioner and cam phasers", Zone.TimingEnd, "Inside the timing cover at the passenger end of the engine.", "High mileage with P0011/P0016 together points to a stretched chain: needs a workshop.")
+    private val crank = PartInfo("Crankshaft position sensor", Zone.EngineLow, "On the back of the engine block, low down near the starter; easiest from below.", "Check the connector for oil soaking.")
+    private val camSensor = PartInfo("Camshaft position sensors", Zone.TimingEnd, "On the cylinder head near the timing-chain end, one per camshaft.")
+    private val coolantSensor = PartInfo("Thermostat and coolant temperature sensor", Zone.Gearbox, "In the coolant housing at the driver end of the cylinder head, above the gearbox.", "Check the coolant level in the reservoir (engine cold) first.")
     private val fans = PartInfo("Cooling fans and radiator", Zone.Radiator, "Behind the front grille, in front of the engine.")
-    private val battery = PartInfo("Battery and terminals", Zone.BayLeft, "Under the bonnet on the driver side on most Malibus (some versions keep it in the boot: check yours).", "Clean the terminals and tighten both clamps first.")
-    private val alternator = PartInfo("Alternator and drive belt", Zone.BayRight, "On the front of the engine, turned by the drive belt.")
-    private val fuseBox = PartInfo("Fuse boxes and grounds", Zone.BayLeft, "One box in the engine bay (driver side), one under the dashboard (driver side).")
-    private val trans = PartInfo("Transmission: solenoids, valve body, fluid", Zone.EngineLow, "Next to the engine, between the front wheels. Many 6-speed GM automatics have no dipstick; fluid is checked at a plug under the car by a workshop.", "Fluid level and condition first.")
-    private val transSpeed = PartInfo("Transmission speed sensors and connector", Zone.EngineLow, "On the transmission case; one electrical connector carries all the signals.")
-    private val oilSensor = PartInfo("Oil pressure sensor and oil level", Zone.EngineTop, "Near the oil filter, at the front of the engine.", "Check the dipstick before anything else.")
-    private val knock = PartInfo("Knock sensor", Zone.EngineLow, "Bolted to the engine block, under the intake manifold.")
-    private val abs = PartInfo("ABS / brake module", Zone.BayLeft, "Near the brake master cylinder on the driver side of the engine bay.")
-    private val obd = PartInfo("OBD port and body control module", Zone.UnderDash, "Under the dashboard above the driver's knees.")
-    private val clockSpring = PartInfo("Clock spring, steering sensor, airbag module", Zone.Cabin, "Clock spring is behind the steering wheel; the airbag control module is low in the centre of the car. Have a workshop do this: airbags can fire.", "Never probe airbag connectors with the battery connected.")
-    private val seat = PartInfo("Seat belt buckles and seat occupant sensor", Zone.Cabin, "Under and beside the front seats. Check the connector under the seat; do not unplug it with the ignition on.")
+    private val battery = PartInfo("Battery and terminals", Zone.BayLeft, "Engine bay, driver side front (next to the fuse box). The negative cable also has a body ground nearby.", "Clean and tighten both clamps; check the ground strap from engine to body.", "Electrical")
+    private val alternator = PartInfo("Alternator and drive belt", Zone.TimingEnd, "Front of the engine at the passenger end, driven by the serpentine belt.", "A glazed or loose belt squeals and charges poorly with lights and A/C on.", "Electrical")
+    private val fuseBox = PartInfo("Fuse boxes", Zone.BayLeft, "Under-bonnet fuse block: driver side next to the battery. Second block in the cabin at the end of the dashboard (see Fuse boxes in Tools).", "", "Electrical")
+    private val grounds = PartInfo("Main ground straps", Zone.Gearbox, "Engine-to-body strap near the gearbox and battery negative to body.", "A loose ground causes many random codes and low voltage.", "Electrical")
+    private val trans = PartInfo("Gearbox: solenoids, valve body and fluid", Zone.Gearbox, "Driver side of the engine bay, under the battery and air box. Fluid is checked at a plug on the case (no dipstick): workshop job.", "Fluid level and condition first.", "Gearbox")
+    private val tcm = PartInfo("Gearbox control module (TCM)", Zone.Gearbox, "Built INTO the gearbox (inside the valve body) on this 6-speed: no separate box to swap. Answers as 7E2/7EA.", "Check the round connector on the gearbox case for oil or corrosion.", "Gearbox")
+    private val transSpeed = PartInfo("Gearbox speed sensors", Zone.Gearbox, "Inside or on the gearbox case; signals go through the main gearbox connector.", "", "Gearbox")
+    private val oilSensor = PartInfo("Oil pressure sensor and oil level", Zone.TimingEnd, "Oil pressure sensor on the block near the oil filter; dipstick at the front of the engine.", "Check the dipstick before anything else.")
+    private val knock = PartInfo("Knock sensor", Zone.EngineLow, "Bolted to the engine block under the intake manifold (front of the engine), low down.")
+    private val abs = PartInfo("ABS / brake module (EBCM)", Zone.Firewall, "Driver side of the engine bay, near the firewall under the brake master cylinder, with metal brake lines going into it.", "", "Brakes")
+    private val brakeSwitch = PartInfo("Brake pedal switch / sensor", Zone.Steering, "At the top of the brake pedal, under the dashboard.", "", "Brakes")
+    private val eps = PartInfo("Electric power steering motor and control unit", Zone.Steering, "On the steering column behind the lower dash panel (driver knee area). Motor, torque sensor and control unit are one assembly.", "Most 'Service Power Steering' cases start with low voltage, a loose battery terminal or ground, or the column connectors. Test the battery first.", "Steering")
+    private val steerAngle = PartInfo("Steering angle sensor", Zone.Steering, "On the steering column behind the wheel, part of the clock-spring area.", "After a battery change: turn the wheel lock to lock with the engine running so it relearns.", "Steering")
+    private val obd = PartInfo("OBD port and body control module (BCM)", Zone.UnderDash, "OBD port under the dash above the driver's knees; the BCM is behind the left side of the dash near the cabin fuse block.", "", "Electrical")
+    private val cluster = PartInfo("Instrument cluster", Zone.Dash, "Behind the steering wheel in the dashboard.", "", "Electrical")
+    private val clockSpring = PartInfo("Clock spring and steering wheel airbag", Zone.Steering, "Behind the steering wheel. Have a workshop do this: airbags can fire.", "Never probe airbag wiring with the battery connected.", "Airbag")
+    private val sdm = PartInfo("Airbag control module (SDM)", Zone.Cabin, "Under the centre console between the front seats.", "Workshop job.", "Airbag")
+    private val seat = PartInfo("Seat belt buckles, pretensioners, occupant sensor", Zone.Cabin, "Under and beside the front seats. Check the yellow connector under the seat with the ignition OFF.", "", "Airbag")
+    private val hvac = PartInfo("Climate control and blend door actuators", Zone.Dash, "Behind the dashboard centre; actuators on the heater box.", "", "Body")
+    private val wiper = PartInfo("Wiper motor and cabin air filter", Zone.Cowl, "Wiper motor under the cowl panel below the windscreen; cabin filter behind the glove box.", "", "Body")
 
-    private fun wheel(zone: Zone, name: String) = PartInfo("$name wheel speed sensor and tone ring", zone, "Behind the brake disc on the wheel hub, with a wire to the chassis.", "Clean metal dust from the sensor tip; check the wire.")
+    /** Everything, for browsing without a code. */
+    val all: List<PartInfo> get() = listOf(battery, alternator, fuseBox, grounds, obd, cluster, spark, injectors, throttle, maf, airbox, map, purge, vvt, timing, camSensor, crank, knock, oilSensor, coolantSensor, fans, upstreamO2, cat, downstreamO2, fuelPump, fpcm, evapCanister, cap, trans, tcm, transSpeed, abs, brakeSwitch, eps, steerAngle, clockSpring, sdm, seat, hvac, wiper) +
+        listOf(wheel(Zone.WheelFL, "Front left"), wheel(Zone.WheelFR, "Front right"), wheel(Zone.WheelRL, "Rear left"), wheel(Zone.WheelRR, "Rear right"))
+
+    private fun wheel(zone: Zone, name: String) = PartInfo("$name wheel speed sensor", zone, "In the wheel hub behind the brake disc, with a wire running up to the body.", "Clean metal dust from the sensor tip; check the wire where it flexes.", "Brakes")
 
     /** The parts to look at for a code, most likely first. */
     fun forCode(codeIn: String): List<PartInfo> {
@@ -69,22 +98,29 @@ object Parts {
             c.startsWith("P0106") || c.startsWith("P0107") || c.startsWith("P0108") -> { l.add(map); l.add(throttle) }
             c.startsWith("P011") && c != "P0116" -> { l.add(maf); l.add(airbox) }
             c in setOf("P0116", "P0117", "P0118", "P0128", "P0217") -> { l.add(coolantSensor); l.add(fans) }
-            c in setOf("P0011", "P0012", "P0013", "P0014", "P0016", "P0017", "P2646") -> { l.add(vvt); l.add(crank) }
+            c in setOf("P0011", "P0012", "P0013", "P0014", "P2646") -> { l.add(vvt); l.add(oilSensor); l.add(timing) }
+            c in setOf("P0016", "P0017", "P0008", "P0009") -> { l.add(timing); l.add(camSensor); l.add(crank); l.add(vvt) }
+            c in setOf("P0010", "P0013", "P0020", "P2088", "P2089", "P2090", "P2091") -> { l.add(vvt) }
             c.startsWith("P012") || c.startsWith("P022") || c.startsWith("P21") || c.startsWith("P2135") || c.startsWith("P1516") -> { l.add(throttle) }
-            c in setOf("P0335", "P0336", "P0340", "P0341", "P0365") -> { l.add(crank) }
+            c in setOf("P0335", "P0336") -> { l.add(crank) }
+            c in setOf("P0340", "P0341", "P0365", "P0366") -> { l.add(camSensor) }
             c in setOf("P0325", "P0327", "P0328") -> { l.add(knock) }
-            c in setOf("P0562", "P0563", "P0620", "P0621", "P0622") -> { l.add(battery); l.add(alternator); l.add(fuseBox) }
+            c in setOf("P0562", "P0563", "P0620", "P0621", "P0622") -> { l.add(battery); l.add(alternator); l.add(grounds); l.add(fuseBox) }
+            c.startsWith("P008") || c.startsWith("P009") || c.startsWith("P018") || c.startsWith("P019") || c.startsWith("P023") || c.startsWith("P025") || c.startsWith("P062") && c >= "P0627" -> { l.add(fuelPump); l.add(fpcm) }
             c.startsWith("P050") || c.startsWith("P051") -> { l.add(throttle); l.add(airbox) }
             c == "P0480" || c == "P0481" -> { l.add(fans) }
             c.startsWith("P052") -> { l.add(oilSensor) }
             c in setOf("P0500", "P0501", "P0502", "P0503") -> { l.add(abs); l.add(transSpeed) }
             c.startsWith("P071") || c.startsWith("P072") -> { l.add(transSpeed); l.add(trans) }
-            c.startsWith("P07") || c.startsWith("P08") || c.startsWith("P09") || c.startsWith("P17") -> { l.add(trans); l.add(transSpeed) }
+            c.startsWith("P07") || c.startsWith("P08") || c.startsWith("P09") || c.startsWith("P17") -> { l.add(trans); l.add(tcm); l.add(transSpeed) }
             c.startsWith("P06") -> { l.add(fuseBox); l.add(battery) }
-            c.startsWith("U0") -> { l.add(battery); l.add(fuseBox); l.add(obd) }
+            c.startsWith("U0") -> { l.add(battery); l.add(grounds); l.add(fuseBox); l.add(obd) }
             c in setOf("C0035", "C0031", "C0040", "C0034") -> { l.add(wheel(Zone.WheelFL, "Front")); l.add(abs) }
-            c.startsWith("C0") -> { l.add(wheel(Zone.WheelFL, "A")); l.add(abs); l.add(battery) }
-            c.startsWith("B0") -> { l.add(seat); l.add(clockSpring) }
+            // Steering codes (power steering, steering angle/torque): NOT the wheel sensors.
+            c.startsWith("C04") || c.startsWith("C05") || c.startsWith("C08") || c == "C0710" -> { l.add(eps); l.add(steerAngle); l.add(battery); l.add(grounds) }
+            c.startsWith("C016") || c.startsWith("C0161") -> { l.add(brakeSwitch); l.add(abs) }
+            c.startsWith("C0") || c.startsWith("C1") -> { l.add(abs); l.add(wheel(Zone.WheelFL, "Front left")); l.add(wheel(Zone.WheelFR, "Front right")); l.add(battery) }
+            c.startsWith("B0") -> { l.add(sdm); l.add(seat); l.add(clockSpring) }
             c.startsWith("B1") -> { l.add(fuseBox); l.add(obd) }
         }
         if (c == "C0035" || c == "C0031") { l.clear(); l.add(wheel(Zone.WheelFL, "Front left")); l.add(abs) }

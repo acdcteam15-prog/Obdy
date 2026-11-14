@@ -64,7 +64,7 @@ object Report {
         }
         if (battery != null) {
             l.add(ReportLine(ReportLine.HEADING, "Battery and charging test"))
-            val v = BatteryTest.evaluate(battery.rest, battery.crank, battery.idle, battery.rev)
+            val v = BatteryTest.evaluate(battery.rest, battery.crank, battery.idle, battery.rev, battery.load)
             for (x in v) l.add(ReportLine(if (x.level == Level.Bad) ReportLine.WARN else ReportLine.SMALL, "    ${x.title}: ${x.value}. ${x.text}"))
         }
         if (due.isNotEmpty()) {

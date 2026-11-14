@@ -34,7 +34,7 @@ object AiPrompt {
             for ((k, v) in live) sb.append("- $k: $v\n")
         }
         if (battery != null) {
-            sb.append("\nBATTERY TEST: rest=${battery.rest ?: "-"} V, lowest while cranking=${battery.crank ?: "-"} V, idle=${battery.idle ?: "-"} V, 2000 rpm=${battery.rev ?: "-"} V\n")
+            sb.append("\nBATTERY TEST: rest=${battery.rest ?: "-"} V, lowest while cranking=${battery.crank ?: "-"} V, idle=${battery.idle ?: "-"} V, 2000 rpm=${battery.rev ?: "-"} V, idle with lights+A/C+demister=${battery.load ?: "-"} V\n")
         }
         if (overdue.isNotEmpty()) sb.append("\nOVERDUE SERVICE: ${overdue.joinToString(", ")}\n")
         if (extra.isNotBlank()) sb.append("\n$extra\n")

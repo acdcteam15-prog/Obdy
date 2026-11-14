@@ -41,6 +41,8 @@ import com.example.obdy.BatteryTest
 import com.example.obdy.BleScanner
 import com.example.obdy.BuildConfig
 import com.example.obdy.Calc
+import com.example.obdy.Verdict
+import androidx.compose.ui.text.font.FontWeight
 import com.example.obdy.Conn
 import com.example.obdy.DtcDb
 import com.example.obdy.Fuses
@@ -226,50 +228,112 @@ fun SettingsScreen(vm: ObdyVm) {
 @Composable
 fun BatteryScreen(vm: ObdyVm) {
     val on = vm.conn == Conn.On
+    val free = on && vm.batBusy == null
     ScreenFrame("Battery and charging", { vm.overlay = null }) {
+        // ---- live voltage hero
         Panel {
-            Title("Why test this?")
-            Hint("A weak battery or a poor charging system causes strange warning lights (ABS, airbag, steering, many U-codes) and hard starting. In hot climates a battery often lasts only 2 to 3 years.")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Voltage now", color = Brand.TextSecondary, fontSize = 12.sp)
+                    val v = vm.batLive
+                    Text(if (v != null) "${Calc.fmt(v, 2)} V" else "--", color = v?.let { voltColor(it) } ?: Brand.TextPrimary, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                }
+                if (on) SoftButton("Read", enabled = free) { vm.refreshVoltage() }
+            }
             if (!on) { Label("Connect to the car first.", color = Brand.Amber); SoftButton("Connect") { vm.overlay = "connect" } }
-            vm.batLive?.let { Label("Voltage now: ${Calc.fmt(it, 2)} V", bold = true, color = Brand.Accent) }
-            vm.batBusy?.let { Label(it, bold = true, color = Brand.Amber) }
+            vm.batBusy?.let {
+                Label(it, bold = true, color = Brand.Amber)
+                ProgressBar(vm.batFraction)
+            }
+            if (vm.batSamples.size >= 3) {
+                val pts = vm.batSamples.mapIndexed { i, x -> i.toDouble() to x }
+                LineChart(listOf(ChartSeries("V", pts, Brand.Accent)), height = 90)
+                Hint("Lowest ${Calc.fmt(vm.batSamples.min(), 2)} V  ·  highest ${Calc.fmt(vm.batSamples.max(), 2)} V  ·  ${vm.batSamples.size} readings")
+            }
             if (vm.batMsg.isNotBlank()) Hint(vm.batMsg)
         }
-        BatteryHealthCard(vm)
-        BatStep("1. Resting voltage", "Ignition ON, engine off, lights and A/C off.", vm.batRest, on && vm.batBusy == null) { vm.batteryStep(1) }
-        BatStep("2. Starting dip", "Press the button, then START THE ENGINE within a few seconds. Some adapters restart while cranking: if so, skip this step.", vm.batCrank, on && vm.batBusy == null) { vm.batteryStep(2) }
-        BatStep("3. Charging at idle", "Engine running at idle, lights and A/C off.", vm.batIdle, on && vm.batBusy == null) { vm.batteryStep(3) }
-        BatStep("4. Charging at 2000 rpm", "Hold the pedal so the engine stays near 2000 rpm for about 6 seconds (another person helps).", vm.batRev, on && vm.batBusy == null) { vm.batteryStep(4) }
-        val verdicts = BatteryTest.evaluate(vm.batRest, vm.batCrank, vm.batIdle, vm.batRev)
-        if (vm.batRest != null || vm.batCrank != null || vm.batIdle != null || vm.batRev != null) Panel {
-            Title("Result")
-            for (v in verdicts) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Dot(levelColor(v.level)); Spacer(Modifier.width(4.dp)); Label("${v.title}: ${v.value}", bold = true) }
-                Hint(v.text)
+
+        // ---- overall result
+        val summary = BatteryTest.summary(vm.batRest, vm.batCrank, vm.batIdle, vm.batRev, vm.batLoad)
+        if (summary != null) Panel {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppIcon(Ic.Battery, size = 24.dp, color = levelColor(summary.level)); Title(summary.title)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftButton("Save result", Modifier.weight(1f)) { vm.batterySave() }
-                SoftButton("Start again", Modifier.weight(1f)) { vm.batteryReset() }
-            }
+            Hint(summary.text)
+            vm.batRest?.takeIf { it <= 12.85 }?.let { Label("Battery charge about ${BatteryTest.chargePercent(it)} %", size = 13) }
         }
+
+        // ---- steps
+        val verdicts = BatteryTest.evaluate(vm.batRest, vm.batCrank, vm.batIdle, vm.batRev, vm.batLoad).associateBy { it.title }
+        BatStep(1, "Resting voltage", "Ignition ON, engine off, lights and A/C off. Best after the car stood 2 hours.", vm.batRest, verdicts["Resting voltage"], vm.batStepNow == 1, free) { vm.batteryStep(1) }
+        BatStep(2, "Starting dip", "Press Measure, then START THE ENGINE within a few seconds. Some adapters restart while cranking: then skip this step.", vm.batCrank, verdicts["Lowest voltage while cranking"], vm.batStepNow == 2, free) { vm.batteryStep(2) }
+        BatStep(3, "Charging at idle", "Engine idling, lights and A/C off.", vm.batIdle, verdicts["Charging at idle"], vm.batStepNow == 3, free) { vm.batteryStep(3) }
+        BatStep(4, "Charging at 2000 rpm", "Hold about 2000 rpm for 6 seconds (another person helps).", vm.batRev, verdicts["Charging at 2000 rpm"], vm.batStepNow == 4, free) { vm.batteryStep(4) }
+        BatStep(5, "Charging under load", "Engine idling with headlights, A/C on full and rear demister ON. This is the situation of your night-time low voltage.", vm.batLoad, verdicts["Charging under load"], vm.batStepNow == 5, free) { vm.batteryStep(5) }
+        verdicts["Drop with load"]?.let { Panel { Label("${it.title}: ${it.value}", bold = true, color = levelColor(it.level)); Hint(it.text) } }
+        if (vm.batRest != null || vm.batCrank != null || vm.batIdle != null || vm.batRev != null || vm.batLoad != null) {
+            Hint("Each step is saved automatically into one test.")
+            SoftButton("Start a new test", Modifier.fillMaxWidth()) { vm.batteryReset() }
+        }
+
+        BatteryHealthCard(vm)
+
+        // ---- history
         if (vm.batHistory.isNotEmpty()) Panel {
             Title("Earlier tests")
-            for (b in vm.batHistory.take(6)) Label("${fmtDate(b.timeMs)}  rest ${b.rest?.let { Calc.fmt(it, 2) } ?: "-"}  crank ${b.crank?.let { Calc.fmt(it, 2) } ?: "-"}  idle ${b.idle?.let { Calc.fmt(it, 2) } ?: "-"}  2000 ${b.rev?.let { Calc.fmt(it, 2) } ?: "-"}", size = 12)
+            val crank = vm.batHistory.mapNotNull { b -> b.crank?.let { b.timeMs / 86_400_000.0 to it } }.reversed()
+            val idle = vm.batHistory.mapNotNull { b -> (b.idle ?: b.rev)?.let { b.timeMs / 86_400_000.0 to it } }.reversed()
+            if (crank.size >= 2 || idle.size >= 2) {
+                LineChart(listOfNotNull(crank.takeIf { it.size >= 2 }?.let { ChartSeries("Cranking", it, Brand.Amber) }, idle.takeIf { it.size >= 2 }?.let { ChartSeries("Charging", it, Brand.Green) }), height = 110)
+                Legend(listOf("Cranking" to Brand.Amber, "Charging" to Brand.Green))
+            }
+            Row(Modifier.padding(top = 4.dp)) {
+                Text("Date", color = Brand.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.6f))
+                for (h in listOf("Rest", "Crank", "Idle", "2000", "Load")) Text(h, color = Brand.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(28.dp))
+            }
+            for (b in vm.batHistory.take(10)) Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(fmtDate(b.timeMs), color = Brand.TextPrimary, fontSize = 11.sp, modifier = Modifier.weight(1.6f))
+                for ((x, kind) in listOf(b.rest to 1, b.crank to 2, b.idle to 3, b.rev to 3, b.load to 5))
+                    Text(x?.let { Calc.fmt(it, 2) } ?: "–", color = x?.let { stepColor(kind, it) } ?: Brand.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                IconTap(Ic.Close) { vm.deleteBattery(b) }
+            }
         }
     }
 }
 
+private fun voltColor(v: Double): androidx.compose.ui.graphics.Color = when {
+    v < 11.8 || v > 15.0 -> Brand.Red; v < 12.4 -> Brand.Amber; else -> Brand.Green
+}
+
+/** Colour of a saved value: 1 rest, 2 crank, 3 charging, 5 under load. */
+private fun stepColor(kind: Int, v: Double): androidx.compose.ui.graphics.Color = when (kind) {
+    1 -> if (v >= 12.5) Brand.Green else if (v >= 12.2) Brand.Amber else Brand.Red
+    2 -> if (v >= 9.6) Brand.Green else if (v >= 9.0) Brand.Amber else Brand.Red
+    3 -> if (v in 13.2..14.9) Brand.Green else if (v in 13.0..15.0) Brand.Amber else Brand.Red
+    else -> if (v >= 13.2) Brand.Green else if (v >= 12.8) Brand.Amber else Brand.Red
+}
+
 @Composable
-private fun BatStep(title: String, text: String, value: Double?, enabled: Boolean, onClick: () -> Unit) {
+private fun BatStep(n: Int, title: String, text: String, value: Double?, verdict: Verdict?, running: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val col = when {
+        running -> Brand.Accent
+        verdict != null -> levelColor(verdict.level)
+        else -> Brand.TextSecondary
+    }
     Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(34.dp).clip(RoundedCornerShape(17.dp)).background(col.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                Text(if (value != null && !running) "✓" else "$n", color = col, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
             Column(Modifier.weight(1f)) {
                 Label(title, bold = true)
-                Hint(text)
-                if (value != null) Label("${Calc.fmt(value, 2)} V", bold = true, color = Brand.Accent)
+                if (value != null) Text("${Calc.fmt(value, 2)} V", color = col, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
-            SoftButton("Measure", enabled = enabled, onClick = onClick)
+            SoftButton(if (running) "..." else if (value == null) "Measure" else "Again", enabled = enabled, onClick = onClick)
         }
+        Hint(text)
+        if (verdict != null && !running) Text(verdict.text, color = col, fontSize = 12.sp)
     }
 }
 

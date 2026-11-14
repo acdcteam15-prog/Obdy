@@ -19,7 +19,7 @@ data class Car(
 
 class ScanRecord(val timeMs: Long, val odometerKm: Int, val milOn: Boolean?, val faults: List<Fault>, val voltage: Double?, val notes: String)
 class TripRecord(val startMs: Long, val seconds: Double, val km: Double, val liters: Double, val maxKmh: Double, val score: Int = -1)
-class BatteryRecord(val timeMs: Long, val rest: Double?, val crank: Double?, val idle: Double?, val rev: Double?)
+class BatteryRecord(val timeMs: Long, val rest: Double?, val crank: Double?, val idle: Double?, val rev: Double?, val load: Double? = null, val km: Int = 0)
 class AiRecord(val timeMs: Long, val title: String, val text: String)
 
 /** All saved data lives in small JSON files in the app's private folder, so nothing leaves the phone except what you share. */
@@ -37,6 +37,10 @@ class Store(private val ctx: Context) {
     var lastAddress: String get() = prefs.getString("lastAddr", "") ?: ""; set(v) { prefs.edit().putString("lastAddr", v).apply() }
     var autoConnect: Boolean get() = prefs.getBoolean("autoConnect", false); set(v) { prefs.edit().putBoolean("autoConnect", v).apply() }
     var keepScreenOn: Boolean get() = prefs.getBoolean("keepOn", true); set(v) { prefs.edit().putBoolean("keepOn", v).apply() }
+    var autoScan: Boolean get() = prefs.getBoolean("autoScan", true); set(v) { prefs.edit().putBoolean("autoScan", v).apply() }
+    var deepMode06: Boolean get() = prefs.getBoolean("deep06", true); set(v) { prefs.edit().putBoolean("deep06", v).apply() }
+    /** Odometer source found inside a module: "resp|request|offset|len|scale|miles", empty = none. */
+    var odoSpec: String get() = prefs.getString("odoSpec", "") ?: ""; set(v) { prefs.edit().putString("odoSpec", v).apply() }
     var fastMode: Boolean get() = prefs.getBoolean("fast", true); set(v) { prefs.edit().putBoolean("fast", v).apply() }
     var autoReconnect: Boolean get() = prefs.getBoolean("reconnect", true); set(v) { prefs.edit().putBoolean("reconnect", v).apply() }
     var recordRoute: Boolean get() = prefs.getBoolean("route", false); set(v) { prefs.edit().putBoolean("route", v).apply() }
@@ -139,20 +143,38 @@ class Store(private val ctx: Context) {
     }
 
     // ---- battery tests
-    fun loadBattery(): List<BatteryRecord> = readJson("battery.json").mapObjects {
-        BatteryRecord(it.getLong("t"), it.optDoubleOrNull("a"), it.optDoubleOrNull("b"), it.optDoubleOrNull("c"), it.optDoubleOrNull("d"))
+    /**
+     * Older versions saved one row per "Save" press, so one test showed up 4 times with more values each time. Rows less than
+     * 15 minutes apart are merged into one test (newest value of each step wins).
+     */
+    fun loadBattery(): List<BatteryRecord> {
+        val rows = readJson("battery.json").mapObjects {
+            BatteryRecord(it.getLong("t"), it.optDoubleOrNull("a"), it.optDoubleOrNull("b"), it.optDoubleOrNull("c"), it.optDoubleOrNull("d"), it.optDoubleOrNull("e"), it.optInt("km"))
+        }.sortedByDescending { it.timeMs }
+        val out = ArrayList<BatteryRecord>()
+        for (r in rows) {
+            val last = out.lastOrNull()
+            if (last != null && last.timeMs - r.timeMs <= 15 * 60_000L) {
+                out[out.size - 1] = BatteryRecord(last.timeMs, last.rest ?: r.rest, last.crank ?: r.crank, last.idle ?: r.idle, last.rev ?: r.rev, last.load ?: r.load, maxOf(last.km, r.km))
+            } else out.add(r)
+        }
+        return out
     }
 
-    fun addBattery(b: BatteryRecord) {
-        val all = (listOf(b) + loadBattery()).take(50)
+    private fun writeBattery(all: List<BatteryRecord>) {
         writeJson("battery.json", JSONArray().also { a ->
-            all.forEach { r ->
-                val o = JSONObject().put("t", r.timeMs)
-                r.rest?.let { o.put("a", it) }; r.crank?.let { o.put("b", it) }; r.idle?.let { o.put("c", it) }; r.rev?.let { o.put("d", it) }
+            all.take(60).forEach { r ->
+                val o = JSONObject().put("t", r.timeMs).put("km", r.km)
+                r.rest?.let { o.put("a", it) }; r.crank?.let { o.put("b", it) }; r.idle?.let { o.put("c", it) }; r.rev?.let { o.put("d", it) }; r.load?.let { o.put("e", it) }
                 a.put(o)
             }
         })
     }
+
+    /** Saves a test; a test with the same start time is replaced (one row per test, updated after every step). */
+    fun addBattery(b: BatteryRecord) = writeBattery(listOf(b) + loadBattery().filter { it.timeMs != b.timeMs && Math.abs(it.timeMs - b.timeMs) > 15 * 60_000L })
+
+    fun deleteBattery(timeMs: Long) = writeBattery(loadBattery().filter { it.timeMs != timeMs })
 
     private fun JSONObject.optDoubleOrNull(k: String): Double? = if (has(k) && !isNull(k)) getDouble(k) else null
 

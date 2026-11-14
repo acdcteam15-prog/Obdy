@@ -477,6 +477,14 @@ object DtcDb {
         "U0424" to "Invalid data received from HVAC control module",
     )
 
+    /** Plain meaning of the status byte a module sent with a code ("status 2B"). Bits follow UDS / GMLAN (best effort). */
+    fun statusBits(status: String): List<String> {
+        val v = Regex("([0-9A-Fa-f]{2})\\s*$").find(status)?.groupValues?.get(1)?.toInt(16) ?: return emptyList()
+        val names = listOf("failing right now", "failed during this drive", "pending (seen, not yet confirmed)", "confirmed / stored",
+            "self-test not finished since codes were cleared", "has failed since codes were cleared", "self-test not finished this drive", "asks for the warning light")
+        return (0..7).filter { (v shr it) and 1 == 1 }.map { names[it] }
+    }
+
     fun known(code: String): Boolean = names.containsKey(code.take(5).uppercase())
 
     /** Description of a code; falls back to what the code number itself tells (system and group). */

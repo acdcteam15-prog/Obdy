@@ -74,8 +74,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
      * mileage = typed km + (counter now - counter then). When codes are cleared the counter restarts and Obdy re-anchors.
      * Cars that do report A6 use it directly.
      */
-    enum class OdoSource(val label: String) { Car("from the car"), Tracked("tracked by the car's distance counter"), Manual("entered by you"), Unknown("not set") }
-    var odoSource by mutableStateOf(if (store.loadOdo()?.d31?.let { it >= 0 } == true) OdoSource.Tracked else OdoSource.Manual)
+    enum class OdoSource(val label: String) { Car("from the car"), Module("read from a module"), Tracked("tracked by the car's distance counter"), Manual("entered by you"), Unknown("not set") }
+    var odoSource by mutableStateOf(if (store.odoSpec.isNotEmpty()) OdoSource.Module else if (store.loadOdo()?.d31?.let { it >= 0 } == true) OdoSource.Tracked else OdoSource.Manual)
     var lastD31 by mutableStateOf<Int?>(null)
     var odoSyncMs by mutableStateOf(0L)
 
@@ -85,6 +85,19 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (0xA6 in supported) {
             val km = withCar { readPid(Pids.byId(0xA6)!!) }?.toInt()
             if (km != null && km > 0) { odoSource = OdoSource.Car; odoSyncMs = System.currentTimeMillis(); if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km)); return }
+        }
+        val spec = store.odoSpec.split("|")
+        if (spec.size == 6) {
+            val resp = spec[0]
+            val m = foundModules.firstOrNull { it.probe.resp == resp } ?: Gm.probeForResponse(resp)?.let { FoundModule(it, "") }
+            val c = OdoCandidate("", m?.probe?.req ?: "", resp, spec[1], spec[2].toInt(), spec[3].toInt(), spec[4].toDouble(), spec[5].toBoolean(), 0.0)
+            val data = m?.let { mm -> withCar { readModuleData(mm, listOf(c.request)) } }?.firstOrNull()?.second
+            val km = data?.let { OdoFinder.decode(c, it) }?.toInt()
+            if (km != null && km > 0 && (car.odometerKm == 0 || Math.abs(km - car.odometerKm) < 20_000)) {
+                odoSource = OdoSource.Module; odoSyncMs = System.currentTimeMillis()
+                if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km))
+                return
+            }
         }
         if (0x31 !in supported) return
         val d = withCar { readPid(Pids.byId(0x31)!!) }?.toInt() ?: return
@@ -227,6 +240,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 conn = Conn.On
                 chargeWarned = false; lowChargeSec = 0.0
                 try { syncOdometer() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                if (store.autoScan) { autoScanRun = true; scan(false) }
                 connStatus = "Connected: ${t.label}"
                 say("Connected. ${supported.size} live values available.")
                 coldPending = coldCapture
@@ -300,13 +314,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         return try { c.exclusive(block) } catch (e: CancellationException) { throw e } catch (e: IOException) { linkLost(e); null }
     }
 
-    fun refreshVoltage() { viewModelScope.launch { withCar { voltage() }?.let { voltage = it } } }
+    fun refreshVoltage() { viewModelScope.launch { withCar { voltage() }?.let { voltage = it; batLive = it } } }
 
     // ------------------------------------------------------------------ live data, trip, recording
     val liveValues = mutableStateMapOf<Int, Double>()
     val extValues = mutableStateMapOf<String, Double>()
     var liveSel by mutableStateOf(store.livePids)
-    var showExt by mutableStateOf(false)
+    var showExt by mutableStateOf(true)     // gearbox temperature, gear and oil life from GM values (off again if the car refuses)
     var liveRunning by mutableStateOf(false)
     private var liveJob: Job? = null
     private val liveReasons = HashSet<String>()
@@ -386,6 +400,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     val dt = (now - last) / 1e9; last = now
                     tripTick(dt)
                     chargeTick(dt)
+                    driveTick()
                     recTick((now - t0) / 1e9)
                     if (flightOn) flightTick(c)
                     if (now - lastTrail >= 1_000_000_000L && rawValues.isNotEmpty()) {
@@ -470,7 +485,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh, a.score ?: -1))
             trips = store.loadTrips()
             // With the car's counter available the mileage is exact; otherwise add the trip distance worked out from speed.
-            if (odoSource == OdoSource.Tracked || odoSource == OdoSource.Car) viewModelScope.launch { syncOdometer() }
+            if (odoSource != OdoSource.Manual && odoSource != OdoSource.Unknown) viewModelScope.launch { syncOdometer() }
             else setCarQuiet(car.copy(odometerKm = car.odometerKm + Math.round(a.km).toInt()))
             say("Trip saved: ${Calc.fmt(a.km, 1)} km")
         }
@@ -492,10 +507,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun chargeTick(dt: Double) {
         val rpm = liveValues[0x0C] ?: return
         val v = liveValues[0x42] ?: return
-        if (rpm > 500 && v < 12.9) lowChargeSec += dt else lowChargeSec = 0.0
-        if (!chargeWarned && lowChargeSec >= 60) {
+        // Below 12.6 V for 60 s, or below 12.9 V for 3 minutes (GM's voltage control can sit near 12.8 V at idle for a while).
+        if (rpm > 500 && v < 12.9) lowChargeSec += dt * (if (v < 12.6) 3.0 else 1.0) else lowChargeSec = 0.0
+        if (!chargeWarned && lowChargeSec >= 180) {
             chargeWarned = true
-            chargeWarning = "Engine running but only ${Calc.fmt(v, 1)} V for a minute: the battery is not being charged properly. " +
+            chargeWarning = "Engine running but only ${Calc.fmt(v, 1)} V for a while: the battery is not being charged properly. " +
                 "Low voltage is the most common cause of \"Service Power Steering\" on this Malibu. Run the Battery test (Tools)."
             say("Charging looks low: ${Calc.fmt(v, 1)} V with the engine running")
         }
@@ -587,6 +603,95 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private var foundModules: List<FoundModule> = emptyList()
     var foundCount by mutableStateOf(0)
 
+    var newCodes by mutableStateOf<List<Fault>>(emptyList())
+    private var autoScanRun = false
+    var autoScan by mutableStateOf(store.autoScan)
+    fun changeAutoScan(v: Boolean) { autoScan = v; store.autoScan = v }
+    var deepMode06 by mutableStateOf(store.deepMode06)
+    fun changeDeepMode06(v: Boolean) { deepMode06 = v; store.deepMode06 = v }
+
+    // ------------------------------------------------------------------ health score and code history
+    fun carHealth(): CarHealth {
+        val running = (liveValues[0x0C] ?: 0.0) > 500
+        val charging = if (running) liveValues[0x42] else batHistory.firstOrNull()?.let { it.idle ?: it.rev }
+        return CarHealthScore.compute(faults, monitors?.milOn, batteryHealth(), charging, dueList(), monitors, tests.count { !it.pass }, lastScanMs > 0)
+    }
+    fun codeStories(): List<CodeStory> = CodeTimeline.build(scanHistory)
+    fun storyFor(f: Fault): CodeStory? = codeStories().firstOrNull { it.code == f.code.take(5) && it.module == f.module }
+
+    // ------------------------------------------------------------------ module explorer and odometer finder (read only)
+    var explorer by mutableStateOf<Map<String, List<Pair<String, IntArray?>>>>(emptyMap())
+    var explorerBusy by mutableStateOf<String?>(null)
+    var odoCandidates by mutableStateOf<List<OdoCandidate>>(emptyList())
+    var odoSearchDone by mutableStateOf(false)
+    fun foundModulesList(): List<FoundModule> = foundModules
+
+    /** Reads identity items plus a range of data identifiers from one module and keeps whatever it answers. */
+    fun exploreModule(m: FoundModule) {
+        if (explorerBusy != null || conn != Conn.On) return
+        explorerBusy = m.probe.resp
+        val reqs = Gm.identItems.map { "1A" + it.first } + OdoFinder.requests + (1..0x30).map { "22%04X".format(it) }
+        viewModelScope.launch {
+            try {
+                val r = withCar { readModuleData(m, reqs.distinct()) { p -> scanProgress = p } } ?: return@launch
+                explorer = explorer + (m.probe.resp to r)
+                if (car.odometerKm > 0) odoCandidates = (odoCandidates + r.flatMap { (q, d) -> if (d == null) emptyList() else OdoFinder.candidates(m.name, m.probe.req, m.probe.resp, q, d, car.odometerKm) }).distinctBy { "${it.resp}/${it.request}/${it.offset}/${it.len}" }
+                say("${m.name}: ${r.count { it.second != null }} of ${r.size} items answered")
+            } finally { explorerBusy = null; scanProgress = "" }
+        }
+    }
+
+    /** Looks through every module for a number matching the known mileage. Needs a deep scan first (to know the modules). */
+    fun findOdometer() {
+        if (explorerBusy != null || conn != Conn.On) return
+        if (foundModules.isEmpty()) { say("Run a Deep scan first so Obdy knows the modules."); return }
+        if (car.odometerKm <= 0) { say("Type the dash mileage first: Obdy compares against it."); return }
+        explorerBusy = "odo"; odoCandidates = emptyList(); odoSearchDone = false
+        viewModelScope.launch {
+            try {
+                val list = ArrayList<OdoCandidate>()
+                for (m in foundModules) {
+                    val r = withCar { readModuleData(m, OdoFinder.requests) { p -> scanProgress = "Looking for the odometer: $p" } } ?: break
+                    for ((q, d) in r) if (d != null) list.addAll(OdoFinder.candidates(m.name, m.probe.req, m.probe.resp, q, d, car.odometerKm))
+                }
+                odoCandidates = list; odoSearchDone = true
+                say(if (list.isEmpty()) "No module reported a number matching your mileage." else "${list.size} possible odometer reading(s) found.")
+            } finally { explorerBusy = null; scanProgress = "" }
+        }
+    }
+
+    fun useOdoCandidate(c: OdoCandidate) {
+        store.odoSpec = listOf(c.resp, c.request, c.offset, c.len, c.scale, c.miles).joinToString("|")
+        odoSource = OdoSource.Module; say("Mileage will now be read from ${c.module} (${c.request}).")
+        viewModelScope.launch { syncOdometer() }
+    }
+    fun forgetOdoModule() { store.odoSpec = ""; odoSource = OdoSource.Tracked }
+
+    // ------------------------------------------------------------------ driving mode alerts
+    var driveAlert by mutableStateOf<String?>(null)
+    private var lastAlertMs = 0L
+    private fun driveTick() {
+        if ("drive" !in liveReasons) return
+        val rpm = liveValues[0x0C] ?: 0.0
+        val msg = when {
+            (liveValues[0x05] ?: 0.0) >= 112 -> "Engine hot: ${Calc.fmt(liveValues[0x05]!!, 0)} °C. Pull over safely, idle, then switch off."
+            rpm > 500 && (liveValues[0x42] ?: 14.0) < 12.6 -> "Not charging: ${Calc.fmt(liveValues[0x42]!!, 1)} V"
+            (extValues["Transmission fluid temp (GM)"] ?: 0.0) >= 115 -> "Gearbox hot: ${Calc.fmt(extValues["Transmission fluid temp (GM)"]!!, 0)} °C. Drive gently."
+            rpm >= 6200 -> "Very high rpm"
+            else -> null
+        }
+        driveAlert = msg
+        val now = System.currentTimeMillis()
+        if (msg != null && now - lastAlertMs > 20_000) {
+            lastAlertMs = now
+            try {
+                val vib = ctx.getSystemService(android.os.Vibrator::class.java)
+                vib?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300), -1))
+                android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 90).startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 400)
+            } catch (_: Exception) {}
+        }
+    }
+
     /** One row per module from the last deep scan (kept when a quick scan follows). */
     var moduleResults by mutableStateOf<List<ModuleResult>>(emptyList())
     var lastDeepMs by mutableStateOf(0L)
@@ -657,6 +762,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         mf.addAll(r.faults.filter { f -> all.none { it.code.take(5) == f.code.take(5) && it.module == f.module } })
                         n.addAll(r.notes); rows.add(r.result)
                     }
+                    if (store.deepMode06) {
+                        scanProgress = "Engine self-test results (Mode 06)..."; scanFraction = 0.93f
+                        withCar { readMode06 { p -> scanProgress = "Self-tests: $p" } }?.let { tests = it; testsRead = true }
+                    }
                     // Last net: ask everyone at once for codes; anything from a module we did not read is added under its id.
                     scanProgress = "Final check: any module with a code..."; scanFraction = 0.95f
                     val bc = withCar { broadcastFaults() } ?: emptyMap()
@@ -675,6 +784,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 all.addAll(moduleFaults)
                 faults = all.distinctBy { it.key }; monitors = mon; freeze = fr; scanNotes = notes
                 lastScanMs = System.currentTimeMillis()
+                // Codes that were not in the previous scan (the first scan ever has nothing to compare with).
+                val prev = scanHistory.firstOrNull()
+                newCodes = if (prev == null) emptyList() else faults.filter { f -> prev.faults.none { it.code.take(5) == f.code.take(5) && it.module == f.module } }
+                if (autoScanRun && newCodes.isNotEmpty()) Notifier.newCodes(ctx, newCodes.map { "${it.code} ${it.description}" })
+                autoScanRun = false
                 store.addScan(ScanRecord(lastScanMs, car.odometerKm, mon?.milOn, faults, voltage, notes.joinToString(" | ")))
                 scanHistory = store.loadScans()
                 say(if (faults.isEmpty()) "No fault codes found." else "${faults.size} fault code(s) found.")
@@ -715,19 +829,35 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var batCrank by mutableStateOf<Double?>(null)
     var batIdle by mutableStateOf<Double?>(null)
     var batRev by mutableStateOf<Double?>(null)
+    var batLoad by mutableStateOf<Double?>(null)
+    /** Voltage readings of the step being measured (for the live mini chart) and its countdown. */
+    var batSamples by mutableStateOf<List<Double>>(emptyList())
+    var batStepNow by mutableStateOf(0)
+    var batFraction by mutableStateOf(0f)
+    private var batSessionMs = 0L
     var batBusy by mutableStateOf<String?>(null)
     var batMsg by mutableStateOf("")
     var batLive by mutableStateOf<Double?>(null)
     var batHistory by mutableStateOf(store.loadBattery())
 
-    fun batteryReset() { batRest = null; batCrank = null; batIdle = null; batRev = null; batMsg = "" }
+    fun batteryReset() { batRest = null; batCrank = null; batIdle = null; batRev = null; batLoad = null; batMsg = ""; batSamples = emptyList(); batSessionMs = 0L }
 
-    /** step 1 = resting, 2 = cranking, 3 = idle, 4 = about 2000 rpm */
+    /** Every finished step updates ONE saved test (no "Save" press needed, and no duplicate rows). */
+    private fun batteryAutoSave() {
+        if (batSessionMs == 0L) batSessionMs = System.currentTimeMillis()
+        store.addBattery(BatteryRecord(batSessionMs, batRest, batCrank, batIdle, batRev, batLoad, car.odometerKm))
+        batHistory = store.loadBattery()
+    }
+
+    fun deleteBattery(b: BatteryRecord) { store.deleteBattery(b.timeMs); batHistory = store.loadBattery() }
+
+    /** step 1 = resting, 2 = cranking, 3 = idle, 4 = about 2000 rpm, 5 = idle with headlights, A/C and demister on */
     fun batteryStep(step: Int) {
         if (batBusy != null) return
         if (conn != Conn.On) { say("Connect to the car first."); return }
-        val seconds = if (step == 2) 15 else 6
-        batBusy = when (step) { 1 -> "Reading the resting voltage..."; 2 -> "START THE ENGINE NOW (cranking is being measured)..."; 3 -> "Measuring at idle..."; else -> "Hold about 2000 rpm..." }
+        val seconds = when (step) { 2 -> 15; 5 -> 10; else -> 6 }
+        batBusy = when (step) { 1 -> "Reading the resting voltage..."; 2 -> "START THE ENGINE NOW (cranking is being measured)..."; 3 -> "Measuring at idle..."; 5 -> "Measuring with the loads on..."; else -> "Hold about 2000 rpm..." }
+        batStepNow = step; batSamples = emptyList(); batFraction = 0f
         if (step == 4) wantLive("battery", true)
         viewModelScope.launch {
             try {
@@ -736,7 +866,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 while (System.currentTimeMillis() < end) {
                     val v = withCar { voltage() }
                     if (conn != Conn.On) break
-                    if (v != null) { samples.add(v); batLive = v }
+                    if (v != null) { samples.add(v); batLive = v; if (samples.size % 3 == 0 || step != 2) batSamples = samples.takeLast(120) }
+                    batFraction = 1f - (end - System.currentTimeMillis()).coerceAtLeast(0) / (seconds * 1000f)
                     delay(if (step == 2) 5 else 150)
                 }
                 if (samples.isEmpty()) { batMsg = "No voltage readings. If the adapter restarted while cranking, reconnect and continue with the idle step."; return@launch }
@@ -744,20 +875,20 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     1 -> batRest = samples.average()
                     2 -> { batCrank = samples.min(); if (samples.max() - samples.min() < 0.4) batMsg = "No voltage dip was seen. The engine may not have been started during the window." else batMsg = "" }
                     3 -> batIdle = samples.average()
+                    5 -> batLoad = samples.drop(samples.size / 3).average()    // first third = the dip while loads switch on
                     else -> batRev = samples.average()
                 }
                 voltage = samples.last()
+                batSamples = samples.takeLast(120)
+                batteryAutoSave()
             } finally {
-                batBusy = null
+                batBusy = null; batStepNow = 0; batFraction = 0f
                 if (step == 4) wantLive("battery", false)
             }
         }
     }
 
-    fun batterySave() {
-        store.addBattery(BatteryRecord(System.currentTimeMillis(), batRest, batCrank, batIdle, batRev))
-        batHistory = store.loadBattery(); say("Test saved")
-    }
+    fun batterySave() { batteryAutoSave(); say("Test saved") }
 
     // ------------------------------------------------------------------ maintenance
     var maint by mutableStateOf(store.loadMaintenance())

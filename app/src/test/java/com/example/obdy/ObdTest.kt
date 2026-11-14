@@ -141,7 +141,9 @@ class ObdTest {
 class PartsTest {
     @Test fun partsForCodes() {
         assertTrue(Parts.forCode("P0301").any { it.name.contains("Spark") })
-        assertEquals(Zone.ExhaustFront, Parts.forCode("P0420").first().zone)
+        assertEquals(Zone.ExhaustSide, Parts.forCode("P0420").first().zone)
+        assertEquals(Zone.Steering, Parts.forCode("C0545-5A").first().zone)
+        assertEquals(Zone.TimingEnd, Parts.forCode("P0011").first().zone)
         assertEquals(Zone.WheelRR, Parts.forCode("C0050").first().zone)
         assertEquals(Zone.WheelFL, Parts.forCode("C0035").first().zone)
         assertTrue(Parts.forCode("P9999").isEmpty())
@@ -505,5 +507,18 @@ class GmlanTest {
         assertEquals("U0460", list[1].code); assertEquals("history", list[1].kind)
         assertEquals("5E8", Gm.uudtId("7E8"))
         assertEquals("Body control (BCM)", Gm.nameForDiagAddress(0x40, "Module 241"))
+    }
+}
+
+class InsightsTest {
+    @Test fun codeComesBack() {
+        val a = Fault("C0545-5A", "Module 242", "active")
+        val n = "Modules that answered: x"
+        val st = CodeTimeline.build(listOf(ScanRecord(1, 1, false, listOf(a), null, n), ScanRecord(2, 2, false, emptyList(), null, n), ScanRecord(3, 3, false, listOf(a), null, n))).first()
+        assertEquals(1, st.returns); assertTrue(st.nowPresent)
+    }
+    @Test fun odometerMatch() {
+        val c = OdoFinder.candidates("IPC", "244", "644", "22000D", intArrayOf(0x00, 0x2C, 0x48, 0x10), 290200)
+        assertTrue(c.isNotEmpty())
     }
 }

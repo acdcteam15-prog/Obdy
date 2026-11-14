@@ -76,12 +76,31 @@ class Verdict(val title: String, val value: String, val level: Level, val text: 
 
 object BatteryTest {
     /** Engine off voltage, lowest voltage while cranking, voltage at idle and at about 2000 rpm. Any of them can be missing. */
-    fun evaluate(rest: Double?, crankMin: Double?, idle: Double?, rev: Double?): List<Verdict> {
+    /** Approximate state of charge of a rested 12 V lead-acid battery (AGM/flooded, 25 °C). */
+    fun chargePercent(rest: Double): Int = when {
+        rest >= 12.70 -> 100; rest >= 12.50 -> 75 + ((rest - 12.50) / 0.20 * 25).toInt(); rest >= 12.30 -> 50 + ((rest - 12.30) / 0.20 * 25).toInt()
+        rest >= 12.00 -> 25 + ((rest - 12.00) / 0.30 * 25).toInt(); rest >= 11.80 -> ((rest - 11.80) / 0.20 * 25).toInt(); else -> 0
+    }
+
+    /** One line for the whole test: battery and charging system. */
+    fun summary(rest: Double?, crankMin: Double?, idle: Double?, rev: Double?, load: Double? = null): Verdict? {
+        val v = evaluate(rest, crankMin, idle, rev, load).filter { it.title != "No data" && it.level != Level.Info }
+        if (v.isEmpty()) return null
+        val bad = v.filter { it.level == Level.Bad }; val warn = v.filter { it.level == Level.Warn }
+        return when {
+            bad.isNotEmpty() -> Verdict("Needs attention", bad.joinToString { it.title.lowercase() }, Level.Bad, bad.first().text)
+            warn.isNotEmpty() -> Verdict("Mostly fine", warn.joinToString { it.title.lowercase() }, Level.Warn, warn.first().text)
+            else -> Verdict("Battery and charging look healthy", "${v.size} of 5 steps done", Level.Good, "Nothing here explains warning lights. If a warning came with low voltage before, it was a one-off (heavy load at idle, a loose terminal) or another cause.")
+        }
+    }
+
+    fun evaluate(rest: Double?, crankMin: Double?, idle: Double?, rev: Double?, load: Double? = null): List<Verdict> {
         val out = ArrayList<Verdict>()
         if (rest != null) {
             val v = Calc.fmt(rest, 2) + " V"
             out.add(
                 when {
+                    rest > 12.85 -> Verdict("Resting voltage", v, Level.Info, "Surface charge: the car was driven or charged recently, so this reads high and says little about the battery. For a true reading wait 2 hours, or switch the headlights on for 1 minute, off, wait 2 minutes and measure again.")
                     rest >= 12.5 -> Verdict("Resting voltage", v, Level.Good, "Battery is well charged.")
                     rest >= 12.2 -> Verdict("Resting voltage", v, Level.Warn, "Partly discharged. Short trips, a parasitic drain or an ageing battery. Drive 30 minutes and test again.")
                     else -> Verdict("Resting voltage", v, Level.Bad, "Discharged or failing. Hot climates shorten battery life to about 2 to 3 years: have it load-tested.")
@@ -119,6 +138,17 @@ object BatteryTest {
                     else -> Verdict("Charging at 2000 rpm", v, Level.Warn, "Slightly outside the normal range.")
                 }
             )
+        }
+        if (load != null) {
+            val v = Calc.fmt(load, 2) + " V"
+            out.add(
+                when {
+                    load >= 13.2 -> Verdict("Charging under load", v, Level.Good, "Alternator keeps up with headlights, A/C and rear demister on.")
+                    load >= 12.8 -> Verdict("Charging under load", v, Level.Warn, "Just keeps up. GM's voltage control lets it sag at idle; fine if it rises above 13.5 V when driving. If warnings appear at night with A/C on, check belt and alternator output.")
+                    else -> Verdict("Charging under load", v, Level.Bad, "The alternator cannot keep up with a normal load at idle: weak alternator, slipping belt, or a poor ground/terminal. This is the classic cause of 'Service Power Steering' at night with lights and A/C on.")
+                }
+            )
+            if (idle != null && idle - load > 1.2) out.add(Verdict("Drop with load", Calc.fmt(idle - load, 2) + " V", Level.Warn, "Voltage falls a lot when loads are switched on: check the alternator output wire, ground strap and belt tension."))
         }
         if (out.isEmpty()) out.add(Verdict("No data", "-", Level.Info, "Run the steps first."))
         return out

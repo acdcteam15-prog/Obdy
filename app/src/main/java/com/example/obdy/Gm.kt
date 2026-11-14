@@ -87,6 +87,7 @@ object Gm {
     val extPids: List<ExtPid> = listOf(
         ExtPid("Transmission fluid temp (GM)", "°C", "7E2", "221940", 1, { it[0] - 40.0 }, -40.0, 160.0),
         ExtPid("Engine oil life (GM)", "%", "7E0", "22115E", 1, { it[0] * 100.0 / 255 }, 0.0, 100.0),
+        ExtPid("Current gear (GM)", "", "7E0", "22199A", 1, { it[0].toDouble() }, 0.0, 6.0),
     )
 
     /** Guided manual relearns: these are the owner-manual style procedures, not scanner commands. */

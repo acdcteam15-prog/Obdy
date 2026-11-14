@@ -1,6 +1,13 @@
 package com.example.obdy.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.MutableTransitionState
@@ -55,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.obdy.Level
+import androidx.compose.ui.graphics.lerp
 import java.util.Locale
 
 @Composable
@@ -64,8 +72,8 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
             .fillMaxWidth()
             .animateContentSize()
             .clip(RoundedCornerShape(18.dp))
-            .background(Brand.Card)
-            .border(1.dp, Brand.CardBorder, RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, 0.045f), Brand.Card)))
+            .border(1.dp, Brush.verticalGradient(listOf(lerp(Brand.CardBorder, Brand.Accent, 0.25f), Brand.CardBorder)), RoundedCornerShape(18.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         content = content,
@@ -77,13 +85,24 @@ fun GradientButton(text: String, brush: Brush, modifier: Modifier = Modifier, en
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(targetValue = if (pressed) 0.97f else 1f, animationSpec = tween(90), label = "btn")
+    val haptic = LocalHapticFeedback.current
+    // A soft light sweep across the button every few seconds (only when it can be pressed).
+    val shine = rememberInfiniteTransition(label = "shine")
+    val sx by shine.animateFloat(-0.6f, 1.6f, infiniteRepeatable(tween(2600, delayMillis = 1800)), label = "sx")
     Box(
         modifier
             .fillMaxWidth()
-            .graphicsLayer { scaleX = sc; scaleY = sc }
+            .graphicsLayer { scaleX = sc; scaleY = sc; shadowElevation = if (enabled) 10f else 0f; shape = RoundedCornerShape(16.dp); clip = true }
             .clip(RoundedCornerShape(16.dp))
             .background(if (enabled) brush else Brush.linearGradient(listOf(Brand.Track, Brand.Track)))
-            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .drawWithContent {
+                drawContent()
+                if (enabled) {
+                    val x = size.width * sx
+                    drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.18f), Color.Transparent), start = Offset(x - 120f, 0f), end = Offset(x + 120f, size.height)))
+                }
+            }
+            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
             .padding(vertical = 15.dp, horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -117,13 +136,14 @@ fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier,
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(targetValue = if (pressed) 0.96f else 1f, animationSpec = tween(100), label = "tile")
     val shape = RoundedCornerShape(18.dp)
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier
             .graphicsLayer { scaleX = sc; scaleY = sc; alpha = if (enabled) 1f else 0.45f }
             .clip(shape)
-            .background(Brand.Card)
+            .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, if (accent) 0.10f else 0.04f), Brand.Card)))
             .border(1.dp, if (accent && enabled) Brand.Accent.copy(alpha = 0.6f) else Brand.CardBorder, shape)
-            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -202,32 +222,119 @@ fun Field(label: String, value: String, onChange: (String) -> Unit, number: Bool
 }
 
 /** A round gauge: the arc fills with the value between [min] and [max]. */
+/**
+ * Live gauge: gradient arc that turns amber/red near the top, tick marks, the lowest and highest value seen since the
+ * screen opened (small markers on the arc), and a tiny trend line of the last readings.
+ */
 @Composable
 fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Double, modifier: Modifier = Modifier, decimals: Int = 0, hint: String = "") {
-    val target = if (value == null || max <= min) 0.0 else ((value - min) / (max - min)).coerceIn(0.0, 1.0)
+    val span = if (max > min) max - min else 1.0
+    val target = if (value == null) 0.0 else ((value - min) / span).coerceIn(0.0, 1.0)
     val animated by animateFloatAsState(targetValue = target.toFloat(), animationSpec = tween(450), label = "gauge")
-    val frac = animated.toDouble()
-    val arcColor = if (target > 0.88) Brand.Red else Brand.Accent
+    val shown by animateFloatAsState(targetValue = (value ?: 0.0).toFloat(), animationSpec = tween(450), label = "num")
+    val hist = remember { ArrayList<Double>() }
+    var lo by remember { mutableStateOf<Double?>(null) }
+    var hi by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(value) {
+        if (value != null) {
+            hist.add(value); if (hist.size > 40) hist.removeAt(0)
+            lo = minOf(lo ?: value, value); hi = maxOf(hi ?: value, value)
+        }
+    }
+    val zone = when { target > 0.9 -> Brand.Red; target > 0.75 -> Brand.Amber; else -> Brand.Accent }
     val track = Brand.Track
+    val accent = Brand.Accent
+    val dim = Brand.TextSecondary
     Column(
-        modifier.clip(RoundedCornerShape(14.dp)).background(Brand.Card).border(1.dp, Brand.CardBorder, RoundedCornerShape(14.dp)).padding(10.dp),
+        modifier.clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(lerp(Brand.Card, zone, 0.06f), Brand.Card)))
+            .border(1.dp, lerp(Brand.CardBorder, zone, 0.25f), RoundedCornerShape(16.dp)).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.fillMaxWidth().height(110.dp), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxWidth().height(110.dp)) {
-                val stroke = 11.dp.toPx()
-                val d = minOf(size.width, size.height) - stroke
+        Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxWidth().height(112.dp)) {
+                val stroke = 10.dp.toPx()
+                val d = minOf(size.width, size.height) - stroke - 6.dp.toPx()
                 val tl = Offset((size.width - d) / 2f, (size.height - d) / 2f)
+                val c = Offset(size.width / 2f, size.height / 2f)
                 drawArc(color = track, startAngle = 135f, sweepAngle = 270f, useCenter = false, topLeft = tl, size = Size(d, d), style = Stroke(stroke, cap = StrokeCap.Round))
-                if (frac > 0.0) drawArc(color = arcColor, startAngle = 135f, sweepAngle = (270.0 * frac).toFloat(), useCenter = false, topLeft = tl, size = Size(d, d), style = Stroke(stroke, cap = StrokeCap.Round))
+                // ticks every 10 %
+                for (i in 0..10) {
+                    val ang = Math.toRadians(135.0 + 27.0 * i)
+                    val r1 = d / 2f + stroke * 0.9f; val r2 = r1 + (if (i % 5 == 0) 5.dp.toPx() else 3.dp.toPx())
+                    drawLine(dim.copy(alpha = 0.5f), Offset(c.x + (r1 * Math.cos(ang)).toFloat(), c.y + (r1 * Math.sin(ang)).toFloat()), Offset(c.x + (r2 * Math.cos(ang)).toFloat(), c.y + (r2 * Math.sin(ang)).toFloat()), strokeWidth = 2f)
+                }
+                // Gradient rotated so it starts where the arc starts: blue, then amber at 75 %, red at the top of the scale.
+                if (animated > 0f) rotate(135f, c) {
+                    drawArc(
+                        brush = Brush.sweepGradient(0f to accent, 0.50f to accent, 0.60f to Brand.Amber, 0.72f to Brand.Red, 1f to Brand.Red, center = c),
+                        startAngle = 0f, sweepAngle = 270f * animated, useCenter = false, topLeft = tl, size = Size(d, d), style = Stroke(stroke, cap = StrokeCap.Round),
+                    )
+                }
+                // min / max markers
+                for ((v, col) in listOfNotNull(lo?.let { it to dim }, hi?.let { it to Color.White })) {
+                    val f = ((v - min) / span).coerceIn(0.0, 1.0)
+                    val ang = Math.toRadians(135.0 + 270.0 * f)
+                    val r = d / 2f
+                    drawCircle(col, radius = 3.dp.toPx(), center = Offset(c.x + (r * Math.cos(ang)).toFloat(), c.y + (r * Math.sin(ang)).toFloat()))
+                }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(if (value == null) "--" else String.format(Locale.US, "%.${decimals}f", value), color = Brand.TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text(if (value == null) "--" else String.format(Locale.US, "%.${decimals}f", shown), color = Brand.TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                 Text(unit, color = Brand.TextSecondary, fontSize = 12.sp)
             }
         }
+        if (hist.size >= 3) Canvas(Modifier.fillMaxWidth().height(22.dp)) {
+            val lo2 = hist.min(); val hi2 = hist.max(); val rng = if (hi2 - lo2 < 1e-6) 1.0 else hi2 - lo2
+            val p = Path()
+            hist.forEachIndexed { i, v ->
+                val x = size.width * i / (hist.size - 1).toFloat()
+                val y = size.height - ((v - lo2) / rng * size.height).toFloat()
+                if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+            }
+            drawPath(p, zone.copy(alpha = 0.8f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+        }
         Text(name, color = Brand.TextSecondary, fontSize = 12.sp, textAlign = TextAlign.Center)
+        if (lo != null && hi != null && hi!! > lo!!) Text("min ${String.format(Locale.US, "%.${decimals}f", lo)} · max ${String.format(Locale.US, "%.${decimals}f", hi)}", color = Brand.TextSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
         if (hint.isNotEmpty()) Text(hint, color = Brand.TextSecondary.copy(alpha = 0.7f), fontSize = 10.sp, textAlign = TextAlign.Center)
+    }
+}
+
+/** Placeholder bars with a moving light, shown while something loads (scans, reads). */
+@Composable
+fun Shimmer(lines: Int = 3) {
+    val t = rememberInfiniteTransition(label = "shimmer")
+    val x by t.animateFloat(-1f, 2f, infiniteRepeatable(tween(1300)), label = "x")
+    val base = Brand.Track
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (i in 0 until lines) {
+            Box(
+                Modifier.fillMaxWidth(if (i == lines - 1) 0.6f else 1f).height(14.dp).clip(RoundedCornerShape(7.dp))
+                    .drawWithContent {
+                        drawRect(base)
+                        val w = size.width
+                        drawRect(Brush.linearGradient(listOf(base, Color.White.copy(alpha = 0.10f), base), start = Offset(w * x - 200f, 0f), end = Offset(w * x + 200f, 0f)))
+                    },
+            )
+        }
+    }
+}
+
+/** Toast: rounded card that slides up, with an icon chosen from the message. */
+@Composable
+fun ToastCard(text: String) {
+    val ic = when {
+        text.contains("not", true) || text.contains("fail", true) || text.contains("error", true) -> Ic.Info
+        text.contains("code", true) -> Ic.Warning
+        else -> Ic.Check
+    }
+    Row(
+        Modifier.graphicsLayer { shadowElevation = 16f; shape = RoundedCornerShape(18.dp); clip = true }
+            .clip(RoundedCornerShape(18.dp)).background(lerp(Brand.Card, Brand.Accent, 0.10f))
+            .border(1.dp, Brand.Accent.copy(alpha = 0.5f), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(ic, size = 18.dp, color = Brand.Accent); Spacer(Modifier.width(10.dp))
+        Text(text, color = Brand.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
     }
 }
 
