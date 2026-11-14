@@ -288,27 +288,48 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val t0 = last
                 var cycle = 0
                 while (currentCoroutineContext().isActive) {
-                    val ids = pollIds()
-                    if (ids.isEmpty()) { delay(400); continue }
+                    val ids = pollIds(cycle)
+                    if (ids.isEmpty()) { cycle++; delay(400); continue }
+                    var answered = 0
+                    /** Stores one reading. Values a car sends as "no signal" (speed 255 km/h, 0.0 V system voltage) are shown as "--", not as a number. */
+                    fun accept(p: Pid, v: Double) {
+                        answered++; dead[p.id] = 0
+                        val invalid = (p.id == 0x0D && v >= 255.0) || (p.id == 0x42 && v <= 0.0)
+                        if (p.id == 0x42) volt42Bad = invalid
+                        if (invalid) { if (p.id != 0x42) liveValues.remove(p.id) } else liveValues[p.id] = v
+                    }
+                    fun missed(id: Int) {
+                        val n = (dead[id] ?: 0) + 1; dead[id] = n
+                        if (n >= 3) liveValues.remove(id)      // never keep showing an old number
+                    }
                     suspend fun single(p: Pid) {
                         val v = c.exclusive { readPid(p) }
-                        if (v != null) { liveValues[p.id] = v; dead[p.id] = 0 } else dead[p.id] = (dead[p.id] ?: 0) + 1
+                        if (v != null) accept(p, v) else missed(p.id)
                     }
                     val pids = ids.mapNotNull { Pids.byId(it) }
                     if (fastMode && !fastBroken && pids.size > 1) {
                         for (chunk in pids.chunked(4)) {
                             val m = if (chunk.size > 1) c.exclusive { readPids(chunk) } else null
                             if (m != null && m.size == chunk.size) {
-                                for ((id, value) in m) { liveValues[id] = value; dead[id] = 0 }
+                                for (p in chunk) m[p.id]?.let { accept(p, it) }
                             } else {
                                 if (chunk.size > 1) { fastFails++; if (fastFails >= 3) { fastBroken = true; say("This adapter does not support fast mode. Reading one value at a time.") } }
                                 for (p in chunk) single(p)
                             }
                         }
                     } else for (p in pids) single(p)
+                    // The car stopped answering (ignition off / asleep): say so once, and keep trying slowly instead of freezing.
+                    if (answered == 0) {
+                        if (!carSilent) { carSilent = true; say("The car is not answering. Turn the ignition on; live data resumes by itself.") }
+                        delay(700)
+                    } else if (carSilent) { carSilent = false; say("The car answers again.") }
+                    // Some engine computers send 0 V (or nothing) for system voltage: use the adapter's own voltage reading instead.
+                    if (0x42 in ids && (volt42Bad || (dead[0x42] ?: 0) >= 3) && cycle % 4 == 0) {
+                        c.exclusive { voltage() }?.let { liveValues[0x42] = it }
+                    }
                     if (showExt && cycle % 4 == 0) {
                         for (e in Gm.extPids) {
-                            if ((dead[-e.name.hashCode()] ?: 0) >= 3) continue
+                            if ((dead[-e.name.hashCode()] ?: 0) >= 3 && cycle % 32 != 0) continue
                             val v = c.exclusive { readExt(e) }
                             if (v != null) { extValues[e.name] = v; dead[-e.name.hashCode()] = 0 } else dead[-e.name.hashCode()] = (dead[-e.name.hashCode()] ?: 0) + 1
                         }
@@ -334,12 +355,16 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun pollIds(): List<Int> {
+    private var volt42Bad = false
+    private var carSilent = false
+
+    private fun pollIds(cycle: Int = 0): List<Int> {
         val want = ArrayList<Int>(liveSel)
         if (tripAcc != null) want.addAll(listOf(0x0D, 0x10, 0x44, 0x5E))
         if (liveReasons.contains("dash")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
         if (flightOn) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x06, 0x07, 0x04, 0x11, 0x10))
-        return want.distinct().filter { (supported.isEmpty() || it in supported) && (dead[it] ?: 0) < 3 }
+        // A value that failed 3 times is only retried every 8th round (it used to be dropped until you reconnected).
+        return want.distinct().filter { (supported.isEmpty() || it in supported) && ((dead[it] ?: 0) < 3 || cycle % 8 == 0) }
     }
 
     // ---- trip and fuel

@@ -9,6 +9,21 @@ class TestResult(val mid: Int, val tid: Int, val uas: Int, val value: Int, val m
     val pass: Boolean get() = value in min..max
     val name: String get() = Mode06.midName(mid)
     val what: String get() = when (tid) { 0x0B -> "average of the last 10 drives"; 0x0C -> "this drive"; else -> "test ${"%02X".format(tid)}" }
+
+    /** Shows [v] in the unit the car announced (UAS id). Units this app does not know are shown as the raw number. */
+    fun fmt(v: Int): String {
+        val (scale, unit) = when (uas and 0x7F) {
+            0x02 -> 0.1 to ""; 0x03 -> 0.01 to ""; 0x04 -> 0.001 to ""
+            0x07 -> 0.25 to " rpm"; 0x08 -> 0.01 to " km/h"
+            0x0A -> 0.122 to " mV"; 0x0B -> 0.001 to " V"; 0x0C -> 0.01 to " V"
+            0x10 -> 1.0 to " ms"; 0x12 -> 1.0 to " s"
+            else -> 1.0 to ""
+        }
+        if (scale == 1.0) return v.toString() + unit
+        val x = v * scale
+        if (unit == " mV") return Math.round(x).toString() + unit
+        return (if (x == Math.rint(x)) x.toLong().toString() else "%.2f".format(java.util.Locale.US, x)) + unit
+    }
 }
 
 object Mode06 {
@@ -18,6 +33,8 @@ object Mode06 {
         mid == 0x21 -> "Catalyst bank 1"
         mid == 0x22 -> "Catalyst bank 2"
         mid == 0x31 -> "EGR system"
+        mid == 0x35 -> "Variable valve timing bank 1"
+        mid == 0x36 -> "Variable valve timing bank 2"
         mid == 0x39 -> "EVAP leak test 0.150 in"
         mid == 0x3A -> "EVAP leak test 0.090 in"
         mid == 0x3B -> "EVAP leak test 0.040 in"
@@ -29,15 +46,19 @@ object Mode06 {
         else -> "Test group %02X".format(mid)
     }
 
-    /** 46 <MID> then groups of 8 bytes: TID, scaling, value(2), min(2), max(2). */
+    /**
+     * 46 then records of 9 bytes: MID, TID, UAS, value(2), min(2), max(2). Every record repeats its own MID. (Read from a real
+     * Malibu: "46 A2 0B 24 0000 0000 FFFF  A2 0C 24 ...".) UAS ids 0x80 and above are signed numbers.
+     */
     fun parse(f: Frame): List<TestResult> {
         if (f.data.size < 10 || f.u(0) != 0x46) return emptyList()
-        val mid = f.u(1)
         val out = ArrayList<TestResult>()
-        var i = 2
-        while (i + 7 < f.data.size) {
-            out.add(TestResult(mid, f.u(i), f.u(i + 1), (f.u(i + 2) shl 8) or f.u(i + 3), (f.u(i + 4) shl 8) or f.u(i + 5), (f.u(i + 6) shl 8) or f.u(i + 7)))
-            i += 8
+        var i = 1
+        while (i + 8 < f.data.size) {
+            val uas = f.u(i + 2)
+            fun num(k: Int): Int { val r = (f.u(k) shl 8) or f.u(k + 1); return if (uas >= 0x80 && r >= 0x8000) r - 0x10000 else r }
+            out.add(TestResult(f.u(i), f.u(i + 1), uas, num(i + 3), num(i + 5), num(i + 7)))
+            i += 9
         }
         return out
     }

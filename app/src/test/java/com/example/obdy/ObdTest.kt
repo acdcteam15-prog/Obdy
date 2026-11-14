@@ -173,14 +173,31 @@ class ExtrasTest {
     }
 
     @Test fun mode06() {
-        val f = Frame("7E8", byteArrayOf(0x46, 0xA2.toByte(), 0x0B, 0x24, 0x00, 0x02, 0x00, 0x00, 0x00, 0x14, 0x0C, 0x24, 0x00, 0x30, 0x00, 0x00, 0x00, 0x14))
+        // Real answer of a 2013 Malibu to "06A2" (ISO-TP, 19 bytes): two 9-byte records that each start with their MID.
+        val raw = "7E8 10 13 46 A2 0B 24 00 00\r7E8 21 00 00 FF FF A2 0C 24\r7E8 22 00 00 00 00 FF FF AA\r>"
+        val f = ObdParse.parse(raw).frames.first()
         val r = Mode06.parse(f)
         assertEquals(2, r.size)
         assertEquals("Misfire, cylinder 1", r[0].name)
-        assertTrue(r[0].pass); assertFalse(r[1].pass)
-        assertEquals(48, r[1].value)
+        assertEquals(0x0B, r[0].tid); assertEquals(0x0C, r[1].tid)
+        assertEquals(0xA2, r[1].mid)
+        assertTrue(r[0].pass); assertTrue(r[1].pass)
+        assertEquals(65535, r[0].max)
         val sup = Mode06.supported(Frame("7E8", byteArrayOf(0x46, 0x00, 0x80.toByte(), 0x00, 0x00, 0x01)))
         assertTrue(1 in sup); assertTrue(0x20 in sup); assertFalse(2 in sup)
+    }
+
+    @Test fun mode06Voltage() {
+        // O2 sensor MID 01, TID 01..: UAS 0A = 0.122 mV per bit, so 0x119E = 4510 is about 550 mV (the 0.55 V switching threshold).
+        val raw = "7E8 10 49 46 01 01 0A 11 9E\r7E8 21 11 9E 11 9E 01 02 0A\r7E8 22 11 9E 11 9E 11 9E 01\r7E8 23 03 0A 0B 36 0B 36 0B\r" +
+            "7E8 24 36 01 04 0A 13 39 13\r7E8 25 39 13 39 01 05 10 00\r7E8 26 00 00 00 00 00 01 06\r7E8 27 10 00 00 00 00 00 00\r" +
+            "7E8 28 01 80 2B 00 00 00 00\r7E8 29 00 00 01 81 2B 00 00\r7E8 2A 00 00 00 00 AA AA AA\r>"
+        val r = Mode06.parse(ObdParse.parse(raw).frames.first())
+        assertEquals(8, r.size)
+        assertEquals(4510, r[0].value); assertEquals("550 mV", r[0].fmt(r[0].value))
+        assertEquals(0x03, r[2].tid); assertTrue(r.all { it.pass })
+        // signed UAS: 0xFFFF counts as -1 and fails a 0..8 limit
+        assertFalse(TestResult(0x41, 0xD2, 0x84, -1, 0, 8).pass)
     }
 
     @Test fun inspection() {

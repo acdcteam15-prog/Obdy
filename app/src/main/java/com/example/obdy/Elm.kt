@@ -154,6 +154,7 @@ class ElmClient(private val transport: Transport) {
         val name = if (m.probe.verified) m.probe.name else "${m.probe.name} (${m.probe.req}/${m.probe.resp})"
         try {
             aim(m.probe)
+            at("ATSTFF")      // GM body/chassis modules can need up to a second to answer (the default wait is 0.2 s)
             val u = query("1902FF", 2500)
             val ok = u.frames.firstOrNull { it.u(0) == 0x59 }
             if (ok != null) {
@@ -169,11 +170,12 @@ class ElmClient(private val transport: Transport) {
                     notes.add("$name: ${list.size} code(s) (GM service A9)")
                 } else {
                     val neg = (u.negatives() + g.negatives()).firstOrNull()
-                    notes.add("$name answers but did not give codes" + (neg?.let { " (${it.hex()})" } ?: "") + ". Raw: ${m.firstAnswer}")
+                    val gm = if (g.frames.isEmpty()) "GM request A9: no answer" else "GM request A9: " + g.frames.joinToString(" | ") { it.hex() }
+                    notes.add("$name answers but did not give codes" + (neg?.let { " (${it.hex()})" } ?: "") + ". $gm. Raw: ${m.firstAnswer}")
                 }
             }
         } finally {
-            try { aimReset() } catch (_: Exception) {}
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
         }
         return ModuleScan(faults, notes)
     }

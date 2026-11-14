@@ -154,7 +154,7 @@ fun TestsScreen(vm: ObdyVm) {
         val fails = vm.tests.filter { !it.pass }
         if (vm.tests.isNotEmpty()) Panel {
             Title(if (fails.isEmpty()) "All ${vm.tests.size} tests inside limits" else "${fails.size} of ${vm.tests.size} tests outside limits")
-            for (f in fails.take(10)) Label("${f.name}: ${f.value} (limit ${f.min} to ${f.max}), ${f.what}", color = Brand.Red, size = 13)
+            for (f in fails.take(10)) Label("${f.name}: ${f.fmt(f.value)} (limit ${f.fmt(f.min)} to ${f.fmt(f.max)}), ${f.what}", color = Brand.Red, size = 13)
             if (fails.isNotEmpty()) Hint("An outside-limit test is an early warning. Misfire counts above the limit on one cylinder point to that cylinder's plug, coil or injector.")
         }
         for ((mid, list) in vm.tests.groupBy { it.mid }) {
@@ -162,7 +162,7 @@ fun TestsScreen(vm: ObdyVm) {
                 Label(list[0].name, bold = true)
                 for (t in list) Row(verticalAlignment = Alignment.CenterVertically) {
                     Dot(if (t.pass) Brand.Green else Brand.Red); Spacer(Modifier.width(4.dp))
-                    Label("${t.what}: ${t.value}  (${t.min} to ${t.max})", size = 13)
+                    Label("${t.what}: ${t.fmt(t.value)}  (${t.fmt(t.min)} to ${t.fmt(t.max)})", size = 13)
                 }
             }
         }
