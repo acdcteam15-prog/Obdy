@@ -58,7 +58,7 @@ fun GearboxScreen(vm: ObdyVm) {
         Panel {
             Title("Share the result")
             Hint("The recording is included automatically when you send or share from Claude Lab.")
-            SoftButton("Open Claude Lab") { vm.overlay = "lab" }
+            SoftButton("Open Claude Lab") { vm.overlay = null; vm.tab = 5 }
         }
     }
 }

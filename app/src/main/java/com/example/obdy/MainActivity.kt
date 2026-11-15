@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         setContent {
             ObdyTheme {
                 val keepOn = vm.keepScreenOn && vm.keepAwake
-                val dash = vm.overlay == "dash"
+                val dash = false   // Driving mode (old Dashboard mode) works in portrait and landscape
                 SideEffect {
                     requestedOrientation = if (dash) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -82,7 +82,7 @@ class MainActivity : AppCompatActivity() {
             "service" -> { vm.overlay = null; vm.tab = 4 }
             "scan" -> { vm.overlay = null; vm.tab = 2 }
             "fuses" -> { vm.fuseSel = null; vm.overlay = "fuses" }
-            "chat" -> vm.overlay = "chat"
+            "chat", "lab" -> { vm.overlay = null; vm.tab = 5 }
         }
     }
 

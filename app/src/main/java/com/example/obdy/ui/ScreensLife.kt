@@ -331,7 +331,7 @@ fun ChecklistScreen(vm: ObdyVm) {
 @Composable
 fun SmartSettingsPanels(vm: ObdyVm) {
     Panel {
-        Title("Smart monitoring")
+        SectionHead(Ic.Bolt, "Smart monitoring")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.flightOn, onCheckedChange = { vm.changeFlight(it) }); Spacer(Modifier.width(8.dp))
             Column { Label("Flight recorder", bold = true); Hint("While connected and the app is open, keeps the last minute of live data. It saves that minute by itself when a code appears, the engine overheats, the voltage drops or the idle turns rough. It does not run with the app closed.") }
@@ -346,7 +346,7 @@ fun SmartSettingsPanels(vm: ObdyVm) {
         }
     }
     Panel {
-        Title("Automatic backup")
+        SectionHead(Ic.Shield, "Automatic backup")
         Hint("Once a week, when the app opens, a backup file (without AI keys) is saved to a folder you choose: on the phone, or in Google Drive.")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.autoBackup, onCheckedChange = { vm.changeAutoBackup(it) }); Spacer(Modifier.width(8.dp))

@@ -110,3 +110,19 @@ object OdoFinder {
         return raw * c.scale * (if (c.miles) 1.609344 else 1.0)
     }
 }
+
+/** How to finish each readiness self-test with normal driving (GM-style drive cycle, simplified). */
+object DriveCycle {
+    fun tip(name: String): String {
+        val n = name.lowercase()
+        return when {
+            "heater" in n -> "Runs by itself within a few minutes after a cold start: start the car after it stood overnight and idle 2 minutes."
+            "oxygen" in n || "o2" in n -> "After the engine is warm, drive steadily at 60–90 km/h for 5 minutes, then lift off and coast down without braking for 10 seconds. Repeat twice."
+            "catalyst" in n -> "Warm engine, steady 70–90 km/h for 5–10 minutes on a flat road (light throttle, no stops)."
+            "evap" in n -> "Needs a cold start after the car stood 8 hours or more, fuel tank between 1/4 and 3/4, outside temperature 4–35 °C. Then drive normally for 20 minutes including some idling."
+            "egr" in n -> "Warm engine, several gentle decelerations from 80 to 50 km/h without braking."
+            "misfire" in n || "fuel" in n || "component" in n -> "These run all the time while driving; a normal 15-minute mixed drive completes them."
+            else -> "Usually completes after a few days of mixed driving (town + 10 minutes steady road speed)."
+        }
+    }
+}

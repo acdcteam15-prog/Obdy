@@ -105,6 +105,32 @@ class Store(private val ctx: Context) {
     fun loadOdo(): OdoAnchor? = try { val o = JSONObject(file("odo.json").readText()); OdoAnchor(o.getInt("km"), o.getInt("d"), o.optLong("t")) } catch (_: Exception) { null }
     fun saveOdo(a: OdoAnchor) { try { file("odo.json").writeText(JSONObject().put("km", a.km).put("d", a.d31).put("t", a.timeMs).toString()) } catch (_: Exception) {} }
 
+    // ---- charging log: one row per drive (voltage at idle and while moving)
+    class ChargeRecord(val timeMs: Long, val idleAvg: Double?, val idleMin: Double?, val driveAvg: Double?, val km: Double)
+    fun loadCharge(): List<ChargeRecord> = readJson("charge.json").mapObjects {
+        ChargeRecord(it.getLong("t"), it.optDoubleOrNull("ia"), it.optDoubleOrNull("im"), it.optDoubleOrNull("da"), it.optDouble("km", 0.0))
+    }.sortedByDescending { it.timeMs }
+    fun addCharge(c: ChargeRecord) {
+        val all = listOf(c) + loadCharge()
+        writeJson("charge.json", JSONArray().also { a -> all.take(100).forEach { r ->
+            val o = JSONObject().put("t", r.timeMs).put("km", r.km)
+            r.idleAvg?.let { o.put("ia", it) }; r.idleMin?.let { o.put("im", it) }; r.driveAvg?.let { o.put("da", it) }
+            a.put(o)
+        } })
+    }
+
+    // ---- Claude Lab conversation (kept between app starts; photos stored as files)
+    class LabMsg(val timeMs: Long, val fromUser: Boolean, val text: String, val imagePath: String? = null, val withBundle: Boolean = false)
+    fun labImagesDir(): File = File(ctx.filesDir, "lab_images").also { it.mkdirs() }
+    fun loadLab(): List<LabMsg> = readJson("lab_chat.json").mapObjects {
+        LabMsg(it.getLong("t"), it.optBoolean("u"), it.optString("x"), it.optString("img").ifBlank { null }, it.optBoolean("b"))
+    }
+    fun saveLab(list: List<LabMsg>) {
+        writeJson("lab_chat.json", JSONArray().also { a -> list.takeLast(200).forEach { m ->
+            a.put(JSONObject().put("t", m.timeMs).put("u", m.fromUser).put("x", m.text).put("img", m.imagePath ?: "").put("b", m.withBundle))
+        } })
+    }
+
     // ---- scan history
     private fun faultJson(f: Fault) = JSONObject().put("c", f.code).put("m", f.module).put("k", f.kind).put("s", f.status).put("r", f.raw)
     private fun faultOf(o: JSONObject) = Fault(o.getString("c"), o.optString("m"), o.optString("k", "stored"), o.optString("s"), o.optString("r"))
@@ -277,7 +303,7 @@ class Store(private val ctx: Context) {
     }
 
     // ---- backup: everything except recordings, in one text file
-    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "events.json", "fuel.json", "parts.json", "providers.json")
+    private val backupFiles = listOf("car.json", "scans.json", "trips.json", "battery.json", "maint.json", "ai.json", "repairs.json", "docs.json", "health.json", "events.json", "fuel.json", "parts.json", "providers.json", "odo.json", "charge.json", "lab_chat.json")
 
     fun exportAll(includeKeys: Boolean): String {
         val root = JSONObject().put("app", "obdy").put("version", 1)
@@ -294,7 +320,7 @@ class Store(private val ctx: Context) {
             files.put(n, text)
         }
         root.put("files", files)
-        root.put("prefs", JSONObject().put("theme", themeKey).put("livePids", livePids.joinToString(",")).put("symptoms", symptoms).put("wifiHost", wifiHost).put("wifiPort", wifiPort).put("ignored", loadIgnored().joinToString(",")))
+        root.put("prefs", JSONObject().put("theme", themeKey).put("livePids", livePids.joinToString(",")).put("symptoms", symptoms).put("wifiHost", wifiHost).put("wifiPort", wifiPort).put("ignored", loadIgnored().joinToString(",")).put("autoScan", autoScan).put("deep06", deepMode06).put("odoSpec", odoSpec))
         return root.toString()
     }
 
@@ -321,6 +347,9 @@ class Store(private val ctx: Context) {
             if (p.has("symptoms")) symptoms = p.getString("symptoms")
             if (p.has("wifiHost")) wifiHost = p.getString("wifiHost")
             if (p.has("wifiPort")) wifiPort = p.getInt("wifiPort")
+            if (p.has("autoScan")) autoScan = p.getBoolean("autoScan")
+            if (p.has("deep06")) deepMode06 = p.getBoolean("deep06")
+            if (p.has("odoSpec")) odoSpec = p.getString("odoSpec")
             if (p.has("ignored")) saveIgnored(p.getString("ignored").split(",").filter { it.isNotBlank() }.toSet())
             n++
         }

@@ -177,13 +177,38 @@ fun UpdatesPanel(vm: ObdyVm) {
     }
 }
 
+/** Settings section header: tinted icon and title. */
+@Composable
+fun SectionHead(ic: Ic, title: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 2.dp)) {
+        Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(Brand.Accent.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) { AppIcon(ic, size = 17.dp, color = Brand.Accent) }
+        Spacer(Modifier.width(10.dp)); Title(title)
+    }
+}
+
 @Composable
 fun SettingsScreen(vm: ObdyVm) {
     val ctx = LocalContext.current
     ScreenFrame("Settings", { vm.overlay = null }, subtitle = "Everything in one place") {
         UpdatesPanel(vm)
         Panel {
-            Title("Look")
+            SectionHead(Ic.Search, "Scanning")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = vm.autoScan, onCheckedChange = { vm.changeAutoScan(it) }); Spacer(Modifier.width(8.dp))
+                Column { Label("Quick scan every time I connect", bold = true); Hint("Notifies you only when a NEW code appears.") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = vm.deepMode06, onCheckedChange = { vm.changeDeepMode06(it) }); Spacer(Modifier.width(8.dp))
+                Column { Label("Deep scan reads engine self-tests too", bold = true); Hint("Misfire counts, catalyst and O2 sensor results (adds about 10 s).") }
+            }
+        }
+        Panel {
+            SectionHead(Ic.Gauge, "Mileage source")
+            Hint("Now: ${vm.odoSource.label}. Type the dash mileage once in the Car tab; Obdy then follows the car's own distance counter.")
+            OdoFinderPanel(vm)
+        }
+        Panel {
+            SectionHead(Ic.Heart, "Look")
             for (p in Palettes.all) {
                 Row(Modifier.fillMaxWidth().clickable { vm.applyTheme(p.key) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(p.accent))
@@ -195,7 +220,7 @@ fun SettingsScreen(vm: ObdyVm) {
             }
         }
         Panel {
-            Title("Connection and screen")
+            SectionHead(Ic.Plug, "Connection and screen")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.autoConnect, onCheckedChange = { vm.changeAutoConnect(it) }); Spacer(Modifier.width(8.dp))
                 Column { Label("Connect automatically when the app opens", bold = true); Hint("Uses the last adapter you connected to.") }
@@ -206,7 +231,7 @@ fun SettingsScreen(vm: ObdyVm) {
             }
         }
         Panel {
-            Title("Live data")
+            SectionHead(Ic.Chart, "Live data")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.showExt, onCheckedChange = { vm.showExt = it }); Spacer(Modifier.width(8.dp))
                 Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature and oil life on the Live screen. Shown only if the module answers.") }
@@ -278,6 +303,29 @@ fun BatteryScreen(vm: ObdyVm) {
 
         BatteryHealthCard(vm)
 
+        // ---- charging on every drive (logged automatically while a trip runs)
+        Panel {
+            Title("Charging on your drives")
+            val log = vm.chargeLog
+            if (log.isEmpty()) Hint("Start a trip on the Live tab: Obdy logs the voltage at idle and while moving, and saves one line per drive. This catches a charging problem that only shows at night or with A/C on.")
+            else {
+                val idle = log.mapNotNull { r -> r.idleAvg?.let { r.timeMs / 86_400_000.0 to it } }.reversed()
+                val drive = log.mapNotNull { r -> r.driveAvg?.let { r.timeMs / 86_400_000.0 to it } }.reversed()
+                if (idle.size >= 2 || drive.size >= 2) {
+                    LineChart(listOfNotNull(idle.takeIf { it.size >= 2 }?.let { ChartSeries("Idle", it, Brand.Amber) }, drive.takeIf { it.size >= 2 }?.let { ChartSeries("Driving", it, Brand.Green) }), height = 110, shared = true)
+                    Legend(listOf("Idle" to Brand.Amber, "Driving" to Brand.Green))
+                }
+                for (r in log.take(6)) Row {
+                    Text(fmtDate(r.timeMs), color = Brand.TextPrimary, fontSize = 11.sp, modifier = Modifier.weight(1.5f))
+                    Text("idle " + (r.idleAvg?.let { Calc.fmt(it, 2) } ?: "–"), color = r.idleMin?.let { if (it < 12.8) Brand.Red else Brand.Green } ?: Brand.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("low " + (r.idleMin?.let { Calc.fmt(it, 2) } ?: "–"), color = Brand.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("drive " + (r.driveAvg?.let { Calc.fmt(it, 2) } ?: "–"), color = Brand.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                }
+                val worst = log.take(10).mapNotNull { it.idleMin }.minOrNull()
+                if (worst != null && worst < 12.8) Label("Lowest idle voltage on recent drives: ${Calc.fmt(worst, 2)} V. Do step 5 (under load) and check belt and terminals.", color = Brand.Red, size = 13)
+            }
+        }
+
         // ---- history
         if (vm.batHistory.isNotEmpty()) Panel {
             Title("Earlier tests")
@@ -341,6 +389,14 @@ private fun BatStep(n: Int, title: String, text: String, value: Double?, verdict
 @Composable
 fun TripsScreen(vm: ObdyVm) {
     ScreenFrame("Fuel and trips", { vm.overlay = null }) {
+        // Fill-ups (real litres from the pump) and trips (worked out from the engine) live together here.
+        Panel(Modifier.clickable { vm.overlay = "fuellog" }) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppIcon(Ic.Fuel, size = 22.dp, color = Brand.Accent)
+                Column(Modifier.weight(1f)) { Title("Fill-up log"); Hint("Real L/100 km and cost from your fill-ups (${vm.fuel.size} saved)") }
+                Text("›", color = Brand.TextSecondary, fontSize = 22.sp)
+            }
+        }
         Panel {
             Title(if (vm.tripOn) "Trip in progress" else "Start a trip")
             if (vm.tripOn) {

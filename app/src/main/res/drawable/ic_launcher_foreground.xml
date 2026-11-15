@@ -1,10 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Obdy icon: a gauge (diagnostics) with its needle and a pulse line (live data). Kept inside the 66 dp safe circle. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <!-- modern simple icon: car -->
-    <path android:pathData="M20,40 Q20,30 30,30 L70,30 Q80,30 80,40 L80,80 Q80,90 70,90 L30,90 Q20,90 20,80 Z"
-        android:fillColor="#03DAC5" android:strokeColor="#00000000" />
-    <path android:pathData="M30,80 a10,10 0 1 1 20,0 a10,10 0 1 1 -20,0"
-        android:fillColor="#FFFFFF" android:strokeColor="#00000000" />
-    <path android:pathData="M78,80 a10,10 0 1 1 20,0 a10,10 0 1 1 -20,0"
-        android:fillColor="#FFFFFF" android:strokeColor="#00000000" />
+    <!-- soft glow ring -->
+    <path android:pathData="M37.03,72.97 A24,24 0 1,1 70.97,72.97"
+        android:strokeWidth="12" android:strokeLineCap="round" android:strokeColor="#2200E5FF" android:fillColor="#00000000" />
+    <!-- gauge arc, cyan to violet -->
+    <path android:pathData="M37.03,72.97 A24,24 0 1,1 70.97,72.97"
+        android:strokeWidth="6.5" android:strokeLineCap="round" android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="30" android:startY="70" android:endX="78" android:endY="40">
+                <item android:offset="0" android:color="#FF00E5FF" />
+                <item android:offset="0.6" android:color="#FF2F80FF" />
+                <item android:offset="1" android:color="#FF8B5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- ticks -->
+    <path android:pathData="M54,36.5 L54,40.5 M40.2,42.2 L43,45 M67.8,42.2 L65,45"
+        android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeColor="#99FFFFFF" />
+    <!-- needle -->
+    <path android:pathData="M54,56 L60.8,39.6"
+        android:strokeWidth="4" android:strokeLineCap="round" android:strokeColor="#FFFFFFFF" />
+    <path android:pathData="M54,56 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" android:fillColor="#FFFFFFFF" />
+    <!-- pulse line -->
+    <path android:pathData="M41,80 L47.5,80 L50.5,75 L54.5,85 L57.5,80 L67,80"
+        android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeColor="#FF00E5FF" android:fillColor="#00000000" />
 </vector>

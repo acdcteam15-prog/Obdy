@@ -172,7 +172,8 @@ fun TimelineScreen(vm: ObdyVm) {
         QuickLog("note", "Noise or vibration", "Noise or vibration started"),
         QuickLog("note", "Something else", ""),
     )
-    ScreenFrame("History and links", { vm.overlay = null }) {
+    ScreenFrame("History", { vm.overlay = null }, subtitle = "Codes over time, events and links") {
+        CodeHistorySection(vm)
         Panel {
             Title("Log what happened")
             Hint("Oil changes, repairs and costs are added by themselves. Log the rest here: Obdy then looks for links, for example an oil change followed by a warning light.")

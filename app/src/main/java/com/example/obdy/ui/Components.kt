@@ -379,3 +379,24 @@ fun Legend(items: List<Pair<String, Color>>) {
         for ((n, c) in items) { Row(verticalAlignment = Alignment.CenterVertically) { Dot(c); Spacer(Modifier.width(4.dp)); Text(n, color = Brand.TextSecondary, fontSize = 12.sp) } }
     }
 }
+
+
+/** The Obdy logo (same drawing as the launcher icon): gradient gauge, needle and pulse line on a dark tile. */
+@Composable
+fun AppLogo(size: Dp = 36.dp) {
+    Canvas(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(Brush.radialGradient(listOf(Color(0xFF16233A), Color(0xFF05070B))))) {
+        val u = this.size.width / 66f            // drawing units: the 66-unit safe area of the icon
+        fun o(x: Float, y: Float) = Offset((x - 21f) * u, (y - 21f) * u)
+        val r = 24f * u
+        val c = o(54f, 56f)
+        val arcTl = Offset(c.x - r, c.y - r)
+        drawArc(
+            Brush.linearGradient(listOf(Color(0xFF00E5FF), Color(0xFF2F80FF), Color(0xFF8B5CF6)), start = o(30f, 70f), end = o(78f, 40f)),
+            startAngle = 135f, sweepAngle = 270f, useCenter = false, topLeft = arcTl, size = Size(2 * r, 2 * r), style = Stroke(6.5f * u, cap = StrokeCap.Round),
+        )
+        drawLine(Color.White, c, o(60.8f, 39.6f), strokeWidth = 4f * u, cap = StrokeCap.Round)
+        drawCircle(Color.White, radius = 4.5f * u, center = c)
+        val p = Path().apply { moveTo(o(41f, 80f).x, o(41f, 80f).y); for ((x, y) in listOf(47.5f to 80f, 50.5f to 75f, 54.5f to 85f, 57.5f to 80f, 67f to 80f)) lineTo(o(x, y).x, o(x, y).y) }
+        drawPath(p, Color(0xFF00E5FF), style = Stroke(2.6f * u, cap = StrokeCap.Round))
+    }
+}

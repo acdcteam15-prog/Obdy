@@ -435,7 +435,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun pollIds(cycle: Int = 0): List<Int> {
         val want = ArrayList<Int>(liveSel)
         if (tripAcc != null) want.addAll(listOf(0x0D, 0x10, 0x44, 0x5E))
-        if (liveReasons.contains("dash")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
+        // Driving mode needs these whatever is picked on Live (it asked as "drive" but only "dash" was handled).
+        if (liveReasons.contains("dash") || liveReasons.contains("drive")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
         if (flightOn) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x06, 0x07, 0x04, 0x11, 0x10))
         // A value that failed 3 times is only retried every 8th round (it used to be dropped until you reconnected).
         return want.distinct().filter { (supported.isEmpty() || it in supported) && ((dead[it] ?: 0) < 3 || cycle % 8 == 0) }
@@ -481,6 +482,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             }
         }
         route = null
+        if (chIdleN + chDriveN >= 5) {
+            store.addCharge(Store.ChargeRecord(tripStartMs, if (chIdleN > 0) chIdleSum / chIdleN else null, if (chIdleN > 0) chIdleMin else null, if (chDriveN > 0) chDriveSum / chDriveN else null, a.km))
+            chargeLog = store.loadCharge()
+        }
+        chIdleSum = 0.0; chIdleN = 0; chIdleMin = 99.0; chDriveSum = 0.0; chDriveN = 0
         if (a.km >= 0.05) {
             store.addTrip(TripRecord(tripStartMs, a.seconds, a.km, a.liters, a.maxKmh, a.score ?: -1))
             trips = store.loadTrips()
@@ -504,9 +510,18 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var chargeWarning by mutableStateOf<String?>(null)
     private var lowChargeSec = 0.0
     private var chargeWarned = false
+    // per-drive charging log (saved when the trip ends)
+    private var chIdleSum = 0.0; private var chIdleN = 0; private var chIdleMin = 99.0; private var chDriveSum = 0.0; private var chDriveN = 0
+    var chargeLog by mutableStateOf(store.loadCharge())
+
     private fun chargeTick(dt: Double) {
         val rpm = liveValues[0x0C] ?: return
         val v = liveValues[0x42] ?: return
+        val kmh = liveValues[0x0D] ?: 0.0
+        if (tripOn && rpm > 500) {
+            if (kmh < 2 && rpm < 1100) { chIdleSum += v; chIdleN++; chIdleMin = minOf(chIdleMin, v) }
+            else if (kmh > 20) { chDriveSum += v; chDriveN++ }
+        }
         // Below 12.6 V for 60 s, or below 12.9 V for 3 minutes (GM's voltage control can sit near 12.8 V at idle for a while).
         if (rpm > 500 && v < 12.9) lowChargeSec += dt * (if (v < 12.6) 3.0 else 1.0) else lowChargeSec = 0.0
         if (!chargeWarned && lowChargeSec >= 180) {
@@ -616,7 +631,21 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         val charging = if (running) liveValues[0x42] else batHistory.firstOrNull()?.let { it.idle ?: it.rev }
         return CarHealthScore.compute(faults, monitors?.milOn, batteryHealth(), charging, dueList(), monitors, tests.count { !it.pass }, lastScanMs > 0)
     }
-    fun codeStories(): List<CodeStory> = CodeTimeline.build(scanHistory)
+    /** Oil status for cam-timing codes (P0011 family): km since the last oil change and the interval. */
+    fun oilNote(): String? {
+        val d = dueList().firstOrNull { it.item.id == "oil" } ?: return null
+        if (!d.recorded || d.item.lastKm <= 0) return "No oil change recorded yet: add the last one in Car → Service so Obdy can watch it."
+        val since = car.odometerKm - d.item.lastKm
+        return "Last oil change %,d km ago (every %,d km)".format(since, d.item.everyKm) + if (d.kmLeft != null && d.kmLeft < 0) " — overdue, change it first." else "."
+    }
+
+    // Built once per change of the scan list (it used to be rebuilt for every fault card on every redraw).
+    private var storiesFor: List<ScanRecord>? = null
+    private var storiesCache: List<CodeStory> = emptyList()
+    fun codeStories(): List<CodeStory> {
+        if (storiesFor !== scanHistory) { storiesCache = CodeTimeline.build(scanHistory); storiesFor = scanHistory }
+        return storiesCache
+    }
     fun storyFor(f: Fault): CodeStory? = codeStories().firstOrNull { it.code == f.code.take(5) && it.module == f.module }
 
     // ------------------------------------------------------------------ module explorer and odometer finder (read only)
@@ -1070,7 +1099,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var labDiscover by mutableStateOf(true)
     var labBusy by mutableStateOf(false)
     var labProgress by mutableStateOf("")
-    var labReply by mutableStateOf<String?>(null)
     var labError by mutableStateOf<String?>(null)
     var labNotes by mutableStateOf<String?>(null)
     var labProbe by mutableStateOf<List<String>>(emptyList())
@@ -1138,20 +1166,49 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun labSend() {
-        if (labBusy) return
+    // ------------------------------------------------------------------ Claude Lab conversation
+    /** The Lab tab is one continuing conversation: questions, photos and (when attached) the full session data. */
+    val lab = mutableStateListOf<Store.LabMsg>().also { it.addAll(store.loadLab()) }
+    var labDraft by mutableStateOf("")
+    var labImage by mutableStateOf<ByteArray?>(null)
+    var labAttach by mutableStateOf(lab.isEmpty())      // first message carries the session data by default
+    var labChatBusy by mutableStateOf(false)
+
+    fun labChatSend(textIn: String = labDraft) {
+        val q = textIn.trim().ifEmpty { if (labAttach) "Here is my car's session data. Please go through it." else if (labImage != null) "What do you see in this photo, and what should I do?" else "" }
+        if (q.isEmpty() || labChatBusy) return
         val p = labProvider
         if (p == null) { labError = "Add an AI service (Anthropic Claude) in Settings first."; return }
-        labBusy = true; labProgress = "Sending to ${p.name}..."; labError = null
-        val text = labBundle()
+        val img = labImage
+        val imgPath = img?.let { b -> File(store.labImagesDir(), "lab_${System.currentTimeMillis()}.jpg").also { it.writeBytes(b) }.absolutePath }
+        val attach = labAttach
+        lab.add(Store.LabMsg(System.currentTimeMillis(), true, q, imgPath, attach))
+        labDraft = ""; labImage = null; labAttach = false; labError = null; labChatBusy = true
+        store.saveLab(lab.toList())
+        // Context: fresh full session data when attached now (or earlier in this conversation), otherwise the normal car summary.
+        val usedBundle = attach || lab.dropLast(1).any { it.withBundle }
+        val context = if (usedBundle) labBundle().take(90_000) else aiPrompt(null, "", withFormat = false)
+        val history = lab.dropLast(1).takeLast(14).joinToString("\n\n") { (if (it.fromUser) "OWNER" else "CLAUDE") + (if (it.imagePath != null) " [sent a photo]" else "") + ": " + it.text.take(4000) }
+        val prompt = context + "\n\n=== CONVERSATION ===\nYou are Claude inside the Obdy app, talking with the car's owner (who also builds the app). " +
+            "Continue the conversation. Use the data above. If a photo is attached, describe what matters in it for the car or the app (warning light, part, screen, error) and what to do. " +
+            "If you suggest changes to the app, put them under a heading 'NOTES FOR THE APP'. Plain text, no markdown tables.\n\n" +
+            (if (history.isNotBlank()) history + "\n\n" else "") + "OWNER" + (if (img != null) " [photo attached]" else "") + ": " + q
         viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { Ai.ask(p, text, false) }
+            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
             if (r.text != null) {
-                labReply = r.text; labNotes = Dossier.extractNotes(r.text)
+                val clean = r.text.replace("**", "").replace("## ", "").replace("# ", "")
+                lab.add(Store.LabMsg(System.currentTimeMillis(), false, clean))
+                store.saveLab(lab.toList())
+                Dossier.extractNotes(r.text)?.let { labNotes = it }
                 store.addAi(AiRecord(System.currentTimeMillis(), "Claude Lab", r.text)); aiHistory = store.loadAi()
             } else labError = r.error
-            labBusy = false; labProgress = ""
+            labChatBusy = false
         }
+    }
+
+    fun labNewChat() {
+        lab.forEach { m -> m.imagePath?.let { File(it).delete() } }
+        lab.clear(); store.saveLab(emptyList()); labNotes = null; labError = null; labAttach = true
     }
 
     /** Saves the bundle as one text file and opens the share sheet (Claude app, e-mail, Drive...). */
@@ -1545,9 +1602,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     val f = File(store.receiptsDir(), "r_${System.currentTimeMillis()}.jpg"); f.writeBytes(b); pendingReceipt = f.absolutePath; say("Photo attached")
                 }
             }
-            "chat" -> {
-                val b = loadJpeg(uri, 1280)
-                if (b == null) say("Could not read that photo.") else { chatImage = b; say("Photo attached to your question") }
+            "lab" -> {
+                val b = loadJpeg(uri, 1400)
+                if (b == null) say("Could not read that photo.") else { labImage = b; say("Photo attached") }
             }
             "quote" -> {
                 val b = loadJpeg(uri, 1600)
@@ -1561,7 +1618,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun voiceResult(text: String) { chatDraft = text }
+    fun voiceResult(text: String) { labDraft = text }
 
     private fun reloadAll() {
         car = store.loadCar(); symptoms = store.symptoms; trips = store.loadTrips(); scanHistory = store.loadScans(); batHistory = store.loadBattery()
@@ -1580,33 +1637,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     // ------------------------------------------------------------------ chat with the car's data
-    class ChatMsg(val fromUser: Boolean, val text: String, val hasImage: Boolean)
-    val chat = mutableStateListOf<ChatMsg>()
-    var chatBusy by mutableStateOf(false)
-    var chatImage by mutableStateOf<ByteArray?>(null)
-    var chatError by mutableStateOf<String?>(null)
-    var chatDraft by mutableStateOf("")
-
-    fun chatSend(text: String) {
-        val q = text.trim()
-        if (q.isEmpty() || chatBusy) return
-        val p = activeProvider
-        if (p == null) { chatError = "Add an AI service in Settings first."; return }
-        val img = chatImage
-        chat.add(ChatMsg(true, q, img != null))
-        chatImage = null; chatDraft = ""; chatError = null; chatBusy = true
-        val history = chat.dropLast(1).takeLast(8).joinToString("\n") { (if (it.fromUser) "Owner: " else "Assistant: ") + it.text }
-        val prompt = aiPrompt(null,
-            "You are chatting with the owner about this car. Use the data above. Answer the latest question directly and briefly (under 180 words unless more is needed). " +
-            "If a photo is attached, say what you see that matters for the car (warning light meaning, part, leak, tyre damage) and what to do. If something could be dangerous, say so first.\n" +
-            (if (history.isNotBlank()) "CONVERSATION SO FAR:\n$history\n" else "") + "LATEST OWNER QUESTION: $q", withFormat = false)
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
-            if (r.text != null) chat.add(ChatMsg(false, r.text.replace("**", "").replace("##", ""), false)) else chatError = r.error
-            chatBusy = false
-        }
-    }
-
     // ------------------------------------------------------------------ history and links, manual schedule
     var logged by mutableStateOf(store.loadEvents())
     var linkAiText by mutableStateOf<String?>(null)

@@ -73,7 +73,7 @@ fun DriveScreen(vm: ObdyVm) {
     val flash = rememberInfiniteTransition(label = "flash")
     val a by flash.animateFloat(0.25f, 0.9f, infiniteRepeatable(tween(500), RepeatMode.Reverse), label = "a")
     Box(Modifier.fillMaxSize().background(Color(0xFF05080D))) {
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Driving", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Text("✕", color = Color.White, fontSize = 26.sp, modifier = Modifier.clickable { vm.overlay = null }.padding(8.dp))
@@ -95,6 +95,11 @@ fun DriveScreen(vm: ObdyVm) {
                 BigStat("Gear", gear?.let { if (it == 0.0) "N/P" else it.toInt().toString() } ?: "--", Brand.Accent, Modifier.weight(1f))
                 BigStat("Gearbox °C", tft?.let { Calc.fmt(it, 0) } ?: "--", if ((tft ?: 0.0) >= 110) Brand.Red else Brand.Green, Modifier.weight(1f))
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                BigStat("Engine load", v[0x04]?.let { Calc.fmt(it, 0) + " %" } ?: "--", Brand.Accent, Modifier.weight(1f))
+                BigStat("Fuel now", if (vm.tripOn) (vm.instL100?.let { Calc.fmt(it, 1) + " L/100" } ?: Calc.fmt(vm.instLph, 1) + " L/h") else "start a trip", Brand.Accent, Modifier.weight(1f))
+            }
+            SymptomButton(vm, Modifier.fillMaxWidth())
             if (vm.tripOn) Text("Trip ${Calc.fmt(vm.tripKm, 1)} km  ·  ${vm.tripL100?.let { Calc.fmt(it, 1) + " L/100" } ?: "-"}", color = Color.White, fontSize = 18.sp)
             Text("Alerts beep and vibrate: engine over 112 °C, charging under 12.6 V, gearbox over 115 °C, rpm over 6200. Screen stays on.", color = Color(0xFF8899AA), fontSize = 12.sp)
         }
@@ -126,28 +131,26 @@ private fun DriveGauge(label: String, value: Double?, min: Double, max: Double, 
 }
 
 // ====================================================================================== Code history
-/** Every code ever seen, per module: when it first appeared, how often, when it went away and whether it came back. */
+/** Every code ever seen, per module: when it first appeared, how often, when it went away and whether it came back. Part of History. */
 @Composable
-fun CodeHistoryScreen(vm: ObdyVm) {
+fun CodeHistorySection(vm: ObdyVm) {
     val stories = vm.codeStories()
-    ScreenFrame("Code history", { vm.overlay = null }) {
-        if (stories.isEmpty()) Panel { Label("No scans saved yet."); Hint("Every scan is kept; this page shows how each code behaves over time.") }
+    Panel {
+        Title("Codes over time")
+        if (stories.isEmpty()) Hint("No codes in the saved scans yet. Every scan is kept; this shows how each code behaves over time.")
         for ((module, list) in stories.groupBy { it.module }) {
-            Text(module, color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            for (st in list) Panel {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(st.code, color = if (st.nowPresent) Brand.Red else Brand.TextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(module, color = Brand.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+            for (st in list) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brand.Track).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(st.code, color = if (st.nowPresent) Brand.Red else Brand.TextSecondary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Pill(if (st.nowPresent) "present" else "gone", if (st.nowPresent) Brand.Red else Brand.Green)
                     if (st.returns > 0) Pill("came back ${st.returns}×", Brand.Amber)
                 }
-                Label(DtcDb.describe(st.code), size = 13)
-                Hint("Seen in ${st.seen} scan(s), first ${fmtDate(st.firstMs)}" + (if (st.firstKm > 0) " at %,d km".format(st.firstKm) else "") + ", last ${fmtDate(st.lastMs)}")
-                // timeline dots
-                Column(Modifier.padding(start = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    for ((t, km, what) in st.events.takeLast(6)) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Dot(when (what) { "gone" -> Brand.Green; "came back" -> Brand.Amber; else -> Brand.Red }); Spacer(Modifier.width(8.dp))
-                        Text("${fmtDate(t)}${if (km > 0) "  ·  %,d km".format(km) else ""}  ·  $what", color = Brand.TextPrimary, fontSize = 12.sp)
-                    }
+                Text(DtcDb.describe(st.code), color = Brand.TextPrimary, fontSize = 12.sp)
+                Text("Seen in ${st.seen} scan(s), first ${fmtDate(st.firstMs)}" + (if (st.firstKm > 0) " at %,d km".format(st.firstKm) else ""), color = Brand.TextSecondary, fontSize = 11.sp)
+                for ((t, km, what) in st.events.takeLast(5)) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Dot(when (what) { "gone" -> Brand.Green; "came back" -> Brand.Amber; else -> Brand.Red }); Spacer(Modifier.width(8.dp))
+                    Text("${fmtDate(t)}${if (km > 0) "  ·  %,d km".format(km) else ""}  ·  $what", color = Brand.TextPrimary, fontSize = 11.sp)
                 }
             }
         }
@@ -205,5 +208,94 @@ private object Explain {
         if (b.size >= 2) parts.add("16-bit " + (0 until b.size / 2).joinToString(", ") { (b[2 * it] shl 8 or b[2 * it + 1]).toString() })
         if (b.size == 1) parts.add("−40 = ${b[0] - 40} (if a temperature)")
         return parts.joinToString("  ·  ")
+    }
+}
+
+// ====================================================================================== Power steering check
+/**
+ * Everything that causes "Service Power Steering" on this Malibu, in the order a good mechanic checks it: voltage now,
+ * battery test, charging on recent drives, steering codes, then the hands-on checks. Each line gets a green/amber/red verdict.
+ */
+@Composable
+fun SteeringCheckScreen(vm: ObdyVm) {
+    val done = remember { mutableStateOf(setOf<Int>()) }
+    ScreenFrame("Power steering check", { vm.overlay = null }, subtitle = "For the 'Service Power Steering' message") {
+        Panel {
+            Title("Why this order")
+            Hint("The electric steering motor draws up to 80 A. When the voltage dips, the steering module protects itself and shows the message. So the electrical supply is checked before any steering part.")
+        }
+        // 1. voltage now
+        val v = vm.liveValues[0x42] ?: vm.voltage
+        val rpm = vm.liveValues[0x0C] ?: 0.0
+        CheckRow(1, "Voltage now", when {
+            v == null -> null
+            rpm > 500 -> v in 13.2..14.9
+            else -> v >= 12.4
+        }, v?.let { "${Calc.fmt(it, 2)} V " + if (rpm > 500) "(engine running: should be 13.2–14.9)" else "(engine off: should be 12.4 or more)" } ?: "Connect to read it",
+            if (vm.conn == Conn.On) "Read" else null) { vm.refreshVoltage() }
+        // 2. battery test
+        val bt = vm.batHistory.firstOrNull()
+        val btOk = bt?.let { (it.crank ?: 10.0) >= 9.6 && ((it.idle ?: it.rev) ?: 14.0) in 13.2..14.9 }
+        CheckRow(2, "Battery and charging test", btOk,
+            bt?.let { "Last test ${fmtDate(it.timeMs)}: crank ${it.crank?.let { c -> Calc.fmt(c, 2) } ?: "-"} V, idle ${it.idle?.let { c -> Calc.fmt(c, 2) } ?: "-"} V, under load ${it.load?.let { c -> Calc.fmt(c, 2) } ?: "not done"}" } ?: "Not done yet",
+            "Open") { vm.overlay = "battery" }
+        // 3. charging on drives
+        val low = vm.chargeLog.take(10).mapNotNull { it.idleMin }.minOrNull()
+        CheckRow(3, "Charging on recent drives", low?.let { it >= 12.8 },
+            if (low == null) "No drives logged yet: start a trip on Live, the voltage is logged automatically." else "Lowest at idle over the last ${minOf(10, vm.chargeLog.size)} drives: ${Calc.fmt(low, 2)} V" + if (low < 12.8) " (too low: the steering can drop out at night with A/C and lights on)" else "",
+            null) {}
+        // 4. steering codes
+        val steer = vm.faults.filter { it.code.startsWith("C04") || it.code.startsWith("C05") || it.code.startsWith("C08") || it.code.startsWith("U0") }
+        CheckRow(4, "Steering and network codes", if (vm.lastDeepMs == 0L) null else steer.isEmpty(),
+            if (vm.lastDeepMs == 0L) "Run a Deep scan: steering codes live in the steering module" else if (steer.isEmpty()) "None found in the last deep scan" else steer.joinToString { it.code + " (" + it.module + ")" },
+            if (vm.conn == Conn.On) "Deep scan" else null) { vm.scan(true); vm.overlay = null; vm.tab = 2 }
+        // 5..8 hands-on
+        val manual = listOf(
+            "Battery clamps tight and clean (no white or green powder); wiggle each one by hand.",
+            "Ground strap from engine to body, and battery negative to body: tight, not corroded.",
+            "Drive belt: no cracks, no squeal with A/C on (a slipping belt charges poorly at idle).",
+            "After any battery work: engine running, turn the wheel slowly lock to lock once, then switch off for 30 s and restart.",
+        )
+        Panel {
+            Title("Hands-on checks")
+            for ((i, t) in manual.withIndex()) {
+                val on = (i in done.value)
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { done.value = if (on) done.value - i else done.value + i }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(24.dp).clip(RoundedCornerShape(7.dp)).background(if (on) Brand.Green else Brand.Track), contentAlignment = Alignment.Center) {
+                        if (on) Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(t, color = if (on) Brand.TextSecondary else Brand.TextPrimary, fontSize = 13.sp)
+                }
+            }
+        }
+        val elec = listOf(btOk, low?.let { it >= 12.8 }).filterNotNull()
+        Panel {
+            Title("What it points to")
+            Hint(when {
+                elec.any { !it } -> "The electrical supply is weak: fix the battery/charging side first. That alone usually clears the message (it can need a restart or a few drives)."
+                steer.isNotEmpty() -> "Supply looks fine and the steering module stores a code: open the code for its likely causes, then Where is it? for the column connectors."
+                elec.size == 2 -> "Supply looks good and no steering code: if the message comes back, note when (cold start, idle at night, A/C) in Symptoms and run a Deep scan right after it appears."
+                else -> "Finish the checks above for a verdict."
+            })
+            SoftButton("Where are these parts?", Modifier.fillMaxWidth()) { vm.partsCode = "C0545"; vm.overlay = "parts" }
+        }
+    }
+}
+
+@Composable
+private fun CheckRow(n: Int, title: String, ok: Boolean?, text: String, action: String?, onAction: () -> Unit) {
+    val col = when (ok) { true -> Brand.Green; false -> Brand.Red; null -> Brand.TextSecondary }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).background(col.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                Text(when (ok) { true -> "✓"; false -> "!"; null -> "$n" }, color = col, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(text, color = if (ok == false) Brand.Red else Brand.TextSecondary, fontSize = 12.sp)
+            }
+            if (action != null) SoftButton(action, onClick = onAction)
+        }
     }
 }

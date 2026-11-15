@@ -256,79 +256,11 @@ fun DocsPanel(vm: ObdyVm) {
     }
 }
 
-// ====================================================================================== Chat with the car's data
-@Composable
-fun ChatScreen(vm: ObdyVm) {
-    ScreenFrame("Ask about your car", { vm.overlay = null }) {
-        if (vm.activeProvider == null) Panel { Label("Add an AI service first."); SoftButton("Open Settings") { vm.overlay = "settings" } }
-        else Hint("Using ${vm.activeProvider?.name}. It sees your codes, freeze frame, live values, repairs and notes. Photos are sent only when you attach one.")
-        if (vm.chat.isEmpty()) {
-            Panel {
-                Title("Try")
-                for (q in listOf("Is it safe to drive with my current codes?", "Why might the idle be rough when cold?", "What should I check first before paying a workshop?")) SoftButton(q, Modifier.fillMaxWidth()) { vm.chatDraft = q }
-            }
-        }
-        for (m in vm.chat) {
-            Panel(if (m.fromUser) Modifier.padding(start = 40.dp) else Modifier.padding(end = 24.dp)) {
-                Label(if (m.fromUser) "You" + (if (m.hasImage) " (with photo)" else "") else "Assistant", bold = true, size = 12, color = if (m.fromUser) Brand.Accent else Brand.TextSecondary)
-                SelectionContainer { Text(m.text, color = Brand.TextPrimary, fontSize = 14.sp) }
-                if (!m.fromUser) FuseChips(vm, m.text)
-            }
-        }
-        if (vm.chatBusy) Label("Thinking...", color = Brand.Amber, bold = true)
-        vm.chatError?.let { Label(it, color = Brand.Red, size = 13) }
-        Panel {
-            Field("Your question", vm.chatDraft, { vm.chatDraft = it }, singleLine = false)
-            if (vm.chatImage != null) Label("Photo attached", color = Brand.Green, size = 13)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SoftButton("Voice", Modifier.weight(1f)) { vm.launchVoice?.invoke() }
-                SoftButton(if (vm.chatImage != null) "Change photo" else "Photo", Modifier.weight(1f)) { vm.pick("chat", "image/*") }
-            }
-            GradientButton(if (vm.chatBusy) "Thinking..." else "Send", Brand.MainBrush, enabled = !vm.chatBusy && vm.activeProvider != null && vm.chatDraft.isNotBlank()) { vm.chatSend(vm.chatDraft) }
-            if (vm.chat.isNotEmpty()) SoftButton("New conversation", Modifier.fillMaxWidth()) { vm.chat.clear(); vm.chatError = null }
-        }
-    }
-}
-
-// ====================================================================================== Dashboard mode
-@Composable
-fun DashScreen(vm: ObdyVm) {
-    DisposableEffect(Unit) { vm.wantLive("dash", true); onDispose { vm.wantLive("dash", false) } }
-    @Composable
-    fun Cell(label: String, value: String, unit: String, big: Int, modifier: Modifier, color: Color = Brand.TextPrimary) {
-        Column(modifier.padding(6.dp).clip(RoundedCornerShape(14.dp)).background(Brand.Card).padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text(label, color = Brand.TextSecondary, fontSize = 13.sp)
-            Text(value, color = color, fontSize = big.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(unit, color = Brand.TextSecondary, fontSize = 13.sp)
-        }
-    }
-    fun v(id: Int, digits: Int = 0): String = vm.liveValues[id]?.let { Calc.fmt(it, digits) } ?: "--"
-    Box(Modifier.fillMaxSize().background(Brand.BgDeep)) {
-        Column(Modifier.fillMaxSize().padding(8.dp)) {
-            Row(Modifier.weight(1.4f).fillMaxWidth()) {
-                Cell("Speed", v(0x0D), "km/h", 84, Modifier.weight(1f).fillMaxHeight())
-                Cell("Engine", v(0x0C), "rpm", 84, Modifier.weight(1f).fillMaxHeight(), if ((vm.liveValues[0x0C] ?: 0.0) > 5500) Brand.Red else Brand.TextPrimary)
-            }
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                val cool = vm.liveValues[0x05] ?: 0.0
-                Cell("Coolant", v(0x05), "°C", 44, Modifier.weight(1f).fillMaxHeight(), if (cool >= 108) Brand.Red else if (cool >= 100) Brand.Amber else Brand.TextPrimary)
-                val volt = vm.liveValues[0x42]
-                Cell("Battery", v(0x42, 1), "V", 44, Modifier.weight(1f).fillMaxHeight(), if (volt != null && (volt < 12.0 || volt > 15.0)) Brand.Red else Brand.TextPrimary)
-                Cell("Load", v(0x04), "%", 44, Modifier.weight(1f).fillMaxHeight())
-                if (vm.tripOn) Cell("Fuel", vm.instL100?.let { Calc.fmt(it, 1) } ?: Calc.fmt(vm.instLph, 1), if (vm.instL100 != null) "L/100 km" else "L/h", 44, Modifier.weight(1f).fillMaxHeight())
-            }
-        }
-        Text("✕", color = Brand.TextSecondary, fontSize = 26.sp, modifier = Modifier.align(Alignment.TopEnd).clickable { vm.overlay = null }.padding(16.dp))
-        if (vm.conn != Conn.On) Text("Not connected", color = Brand.Amber, fontSize = 16.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp))
-        Box(Modifier.align(Alignment.BottomStart).padding(10.dp)) { SymptomButton(vm) }
-    }
-}
-
 // ====================================================================================== Settings: driving, reliability and backup
 @Composable
 fun ExtraSettingsPanels(vm: ObdyVm) {
     Panel {
-        Title("Driving and reliability")
+        SectionHead(Ic.Car, "Driving and reliability")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.fastMode, onCheckedChange = { vm.changeFast(it) }); Spacer(Modifier.width(8.dp))
             Column { Label("Fast mode", bold = true); Hint("Reads up to 4 values per request. Switches itself off if the adapter does not support it.") }
@@ -343,7 +275,7 @@ fun ExtraSettingsPanels(vm: ObdyVm) {
         }
     }
     Panel {
-        Title("Backup and restore")
+        SectionHead(Ic.Shield, "Backup and restore")
         Hint("One file with your car profile, scans, trips, repairs, service data and settings. Recordings are not included.")
         SoftButton("Back up (without AI keys)", Modifier.fillMaxWidth()) { vm.exportBackup(false) }
         SoftButton("Back up (with AI keys)", Modifier.fillMaxWidth()) { vm.exportBackup(true) }

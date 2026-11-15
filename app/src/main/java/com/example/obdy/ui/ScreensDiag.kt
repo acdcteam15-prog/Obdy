@@ -20,6 +20,10 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.obdy.PartInfo
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -83,22 +87,66 @@ fun CarDiagram(pins: List<DiagramPin>, selected: Zone?, onPin: (Zone) -> Unit = 
         Box(Modifier.size(w, h).align(Alignment.Center)) {
             Canvas(Modifier.fillMaxSize()) {
                 val cw = size.width; val ch = size.height
-                // body, windscreen, rear screen, mirrors
-                drawRoundRect(color = body.copy(alpha = 0.55f), topLeft = Offset(cw * 0.15f, ch * 0.015f), size = Size(cw * 0.70f, ch * 0.97f), cornerRadius = CornerRadius(cw * 0.16f, cw * 0.16f))
-                drawRoundRect(color = calm.copy(alpha = 0.5f), topLeft = Offset(cw * 0.21f, ch * 0.335f), size = Size(cw * 0.58f, ch * 0.04f), cornerRadius = CornerRadius(12f, 12f))
-                drawRoundRect(color = calm.copy(alpha = 0.5f), topLeft = Offset(cw * 0.23f, ch * 0.675f), size = Size(cw * 0.54f, ch * 0.03f), cornerRadius = CornerRadius(12f, 12f))
-                drawRoundRect(color = body, topLeft = Offset(cw * 0.08f, ch * 0.36f), size = Size(cw * 0.08f, ch * 0.025f), cornerRadius = CornerRadius(6f, 6f))
-                drawRoundRect(color = body, topLeft = Offset(cw * 0.84f, ch * 0.36f), size = Size(cw * 0.08f, ch * 0.025f), cornerRadius = CornerRadius(6f, 6f))
+                // ---- realistic top view of a saloon (front at the top): body, bonnet creases, glass, roof, lights, tyres
+                fun P(x: Float, y: Float) = Offset(cw * x, ch * y)
+                val glass = Color(0xFF2A4A6A)
+                // tyres first (partly under the body)
+                for ((x, y) in listOf(0.095f to 0.105f, 0.835f to 0.105f, 0.095f to 0.715f, 0.835f to 0.715f))
+                    drawRoundRect(Color(0xFF0B0E13), topLeft = P(x, y), size = Size(cw * 0.07f, ch * 0.13f), cornerRadius = CornerRadius(cw * 0.025f, cw * 0.025f))
+                val bodyPath = Path().apply {
+                    moveTo(cw * 0.5f, ch * 0.012f)
+                    cubicTo(cw * 0.70f, ch * 0.012f, cw * 0.80f, ch * 0.022f, cw * 0.83f, ch * 0.065f)
+                    cubicTo(cw * 0.86f, ch * 0.11f, cw * 0.865f, ch * 0.20f, cw * 0.855f, ch * 0.30f)
+                    cubicTo(cw * 0.84f, ch * 0.42f, cw * 0.84f, ch * 0.56f, cw * 0.855f, ch * 0.70f)
+                    cubicTo(cw * 0.865f, ch * 0.82f, cw * 0.86f, ch * 0.92f, cw * 0.82f, ch * 0.955f)
+                    cubicTo(cw * 0.76f, ch * 0.985f, cw * 0.62f, ch * 0.99f, cw * 0.5f, ch * 0.99f)
+                    cubicTo(cw * 0.38f, ch * 0.99f, cw * 0.24f, ch * 0.985f, cw * 0.18f, ch * 0.955f)
+                    cubicTo(cw * 0.14f, ch * 0.92f, cw * 0.135f, ch * 0.82f, cw * 0.145f, ch * 0.70f)
+                    cubicTo(cw * 0.16f, ch * 0.56f, cw * 0.16f, ch * 0.42f, cw * 0.145f, ch * 0.30f)
+                    cubicTo(cw * 0.135f, ch * 0.20f, cw * 0.14f, ch * 0.11f, cw * 0.17f, ch * 0.065f)
+                    cubicTo(cw * 0.20f, ch * 0.022f, cw * 0.30f, ch * 0.012f, cw * 0.5f, ch * 0.012f)
+                    close()
+                }
+                drawPath(bodyPath, Brush.verticalGradient(listOf(body.copy(alpha = 0.95f), body.copy(alpha = 0.75f), body.copy(alpha = 0.95f))))
+                drawPath(bodyPath, calm.copy(alpha = 0.9f), style = Stroke(width = 2.5f))
+                // bonnet creases
+                for (sx in listOf(1f, -1f)) {
+                    val cx0 = 0.5f + sx * 0.14f; val cx1 = 0.5f + sx * 0.17f
+                    drawPath(Path().apply { moveTo(cw * cx0, ch * 0.04f); quadraticBezierTo(cw * cx1, ch * 0.18f, cw * (0.5f + sx * 0.19f), ch * 0.325f) }, calm.copy(alpha = 0.45f), style = Stroke(width = 1.6f))
+                }
+                // headlights and tail lights
+                for (sx in listOf(1f, -1f)) {
+                    drawPath(Path().apply {
+                        moveTo(cw * (0.5f + sx * 0.18f), ch * 0.022f); lineTo(cw * (0.5f + sx * 0.31f), ch * 0.04f); lineTo(cw * (0.5f + sx * 0.29f), ch * 0.055f); lineTo(cw * (0.5f + sx * 0.17f), ch * 0.034f); close()
+                    }, Color(0xFFE8F4FF).copy(alpha = 0.75f))
+                    drawPath(Path().apply {
+                        moveTo(cw * (0.5f + sx * 0.20f), ch * 0.982f); lineTo(cw * (0.5f + sx * 0.31f), ch * 0.962f); lineTo(cw * (0.5f + sx * 0.30f), ch * 0.948f); lineTo(cw * (0.5f + sx * 0.19f), ch * 0.97f); close()
+                    }, Color(0xFFE5484D).copy(alpha = 0.85f))
+                }
+                // windscreen, roof, rear screen
+                drawPath(Path().apply { moveTo(cw * 0.22f, ch * 0.335f); quadraticBezierTo(cw * 0.5f, ch * 0.315f, cw * 0.78f, ch * 0.335f); lineTo(cw * 0.73f, ch * 0.385f); quadraticBezierTo(cw * 0.5f, ch * 0.372f, cw * 0.27f, ch * 0.385f); close() }, glass.copy(alpha = 0.85f))
+                drawRoundRect(lerp(body, Color.White, 0.06f), topLeft = P(0.27f, 0.385f), size = Size(cw * 0.46f, ch * 0.285f), cornerRadius = CornerRadius(cw * 0.06f, cw * 0.06f))
+                drawPath(Path().apply { moveTo(cw * 0.27f, ch * 0.67f); quadraticBezierTo(cw * 0.5f, ch * 0.68f, cw * 0.73f, ch * 0.67f); lineTo(cw * 0.76f, ch * 0.715f); quadraticBezierTo(cw * 0.5f, ch * 0.73f, cw * 0.24f, ch * 0.715f); close() }, glass.copy(alpha = 0.75f))
+                // side windows
+                for (sx in listOf(1f, -1f)) drawLine(glass.copy(alpha = 0.7f), P(0.5f + sx * 0.255f, 0.39f), P(0.5f + sx * 0.255f, 0.665f), strokeWidth = cw * 0.018f, cap = StrokeCap.Round)
+                // mirrors
+                drawRoundRect(body, topLeft = P(0.075f, 0.345f), size = Size(cw * 0.08f, ch * 0.022f), cornerRadius = CornerRadius(8f, 8f))
+                drawRoundRect(body, topLeft = P(0.845f, 0.345f), size = Size(cw * 0.08f, ch * 0.022f), cornerRadius = CornerRadius(8f, 8f))
                 for (z in Zone.values()) {
                     val pin = pins.firstOrNull { it.zone == z }
                     val sel = z == selected
                     val col = pin?.color ?: calm
                     val tl = Offset(cw * z.l, ch * z.t)
                     val sz = Size(cw * (z.r - z.l), ch * (z.b - z.t))
-                    val fill = when { sel -> glow; pin != null -> 0.40f * appear.value; else -> 0.10f }
+                    if (pin == null && !sel) {
+                        // idle areas: only a faint dotted outline so the car drawing stays clean
+                        drawRoundRect(color = calm.copy(alpha = 0.22f), topLeft = tl, size = sz, cornerRadius = CornerRadius(12f, 12f), style = Stroke(width = 1.2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 6f))))
+                        continue
+                    }
+                    val fill = if (sel) glow else 0.40f * appear.value
                     drawRoundRect(color = col.copy(alpha = fill), topLeft = tl, size = sz, cornerRadius = CornerRadius(12f, 12f))
                     val dash = if (z.under) PathEffect.dashPathEffect(floatArrayOf(10f, 8f)) else null
-                    drawRoundRect(color = if (sel) col else col.copy(alpha = if (pin != null) 0.9f else 0.35f), topLeft = tl, size = sz, cornerRadius = CornerRadius(12f, 12f), style = Stroke(width = if (sel) 5f else if (pin != null) 3f else 1.5f, pathEffect = dash))
+                    drawRoundRect(color = col.copy(alpha = if (sel) 1f else 0.9f), topLeft = tl, size = sz, cornerRadius = CornerRadius(12f, 12f), style = Stroke(width = if (sel) 5f else 3f, pathEffect = dash))
                 }
             }
             // numbered pins (several parts in one zone sit side by side)
