@@ -1,7 +1,7 @@
 package com.example.obdy
 
 /** A module we try to talk to: [req] is the CAN id we send to, [resp] the id it answers from (11-bit, hex). */
-class ModuleProbe(val name: String, val req: String, val resp: String, val verified: Boolean)
+class ModuleProbe(val name: String, val req: String, val resp: String, val verified: Boolean, val bus: Bus = Bus.Hs)
 
 /** A manufacturer value (Mode 22). Experimental: only shown if the module answers. */
 class ExtPid(
@@ -64,6 +64,12 @@ object Gm {
         "99" to "Programming date", "B4" to "Traceability number", "92" to "Supplier hardware number", "97" to "System name",
     )
 
+    /** The same facts as UDS data identifiers (service 22), asked as a second route to the identity of a module. */
+    val udsIdent: List<Pair<String, String>> = listOf(
+        "F190" to "VIN (UDS)", "F187" to "Part number (UDS)", "F18C" to "Serial number (UDS)",
+        "F194" to "Software number (UDS)", "F195" to "Software version (UDS)",
+    )
+
     /** Turns a 1A answer payload into text: printable text, BCD date, 4-byte part number, or hex. */
     fun decodeIdent(did: String, b: IntArray): String {
         if (b.isEmpty()) return "-"
@@ -91,6 +97,7 @@ object Gm {
 
     /** Guided manual relearns: these are the owner-manual style procedures, not scanner commands. */
     val relearns: List<Pair<String, String>> = listOf(
+        "Oil life reset (do it on the dash)" to "Only right after an oil change, never at any other time. Ignition ON (engine off). Press the MENU button on the turn signal lever and scroll with the thumbwheel to REMAINING OIL LIFE. Press SET/CLR to reset to 100%. Ignition OFF. If CHANGE ENGINE OIL SOON comes back at the next start, repeat (owner's manual p.10-11).",
         "Throttle body / idle relearn" to "After cleaning the throttle body or disconnecting the battery: turn ignition ON (engine off) for 10 seconds, then OFF for 10 seconds, then start the engine and let it idle without touching the pedal until the idle is steady (about 2 to 3 minutes). Turn the A/C and lights off during this.",
         "After a battery change" to "Turn ignition ON for 1 minute without starting. Start and idle 3 minutes. Then drive gently 10 to 15 minutes so the idle, fuel trims and transmission shift points relearn. Radio codes, windows auto-up and the clock may need resetting.",
         "Fuel trim relearn" to "After fixing a vacuum leak, MAF or O2 problem: clear the codes, then drive 20 to 30 minutes with steady speeds and stops. Watch Long fuel trim on the Live screen: it should settle within ±5%.",

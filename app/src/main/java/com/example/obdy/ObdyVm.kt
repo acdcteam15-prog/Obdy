@@ -42,6 +42,7 @@ enum class Conn { Off, Connecting, On }
 
 class ObdyVm(app: Application) : AndroidViewModel(app) {
     private val ctx: Context get() = getApplication<Application>()
+    val appCtx: Context get() = ctx
     val store = Store(app)
 
     // ------------------------------------------------------------------ look, navigation, messages
@@ -315,7 +316,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun <T> withCar(block: suspend ElmClient.() -> T): T? {
+    suspend fun <T> withCar(block: suspend ElmClient.() -> T): T? {
         val c = client ?: run { say("Connect to the car first."); return null }
         return try { c.exclusive(block) } catch (e: CancellationException) { throw e } catch (e: IOException) { linkLost(e); null }
     }
@@ -355,6 +356,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val t0 = last
                 var cycle = 0
                 while (currentCoroutineContext().isActive) {
+                    if (livePaused) { delay(150); last = System.nanoTime(); continue }       // a pro tool (monitor, sweep, timer...) owns the adapter
                     val ids = pollIds(cycle)
                     if (ids.isEmpty()) { cycle++; delay(400); continue }
                     var answered = 0
@@ -405,6 +407,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     val now = System.nanoTime()
                     val dt = (now - last) / 1e9; last = now
                     tripTick(dt)
+                    pro.tick(dt)
                     chargeTick(dt)
                     driveTick()
                     recTick((now - t0) / 1e9)
@@ -435,6 +438,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** True while a pro tool (bus monitor, data sweep, timers, active test) uses the adapter: the live loop waits. */
+    @Volatile var livePaused = false
+    /** Bus monitor, signal finder, data sweep, active tests, module inventory, performance timers. */
+    val pro: ProTools by lazy { ProTools(this) }
 
     private val rawValues = HashMap<Int, Double>()
     private val trail = ArrayDeque<LiveSample>()

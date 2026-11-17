@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -77,6 +78,8 @@ import com.example.obdy.Calc
 import com.example.obdy.Conn
 import com.example.obdy.DtcDb
 import com.example.obdy.Fault
+import com.example.obdy.FaultState
+import com.example.obdy.FaultStates
 import com.example.obdy.Docs
 import com.example.obdy.Gm
 import com.example.obdy.Manual
@@ -226,6 +229,13 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "steering" -> SteeringCheckScreen(vm)
                     "codehistory" -> TimelineScreen(vm)
                     "explorer" -> ExplorerScreen(vm)
+                    "buses" -> BusesScreen(vm)
+                    "monitor" -> MonitorScreen(vm)
+                    "signals" -> SignalsScreen(vm)
+                    "sweep" -> SweepScreen(vm)
+                    "atests" -> ActiveTestsScreen(vm)
+                    "inventory" -> InventoryScreen(vm)
+                    "perf" -> PerfScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -414,6 +424,7 @@ fun LiveScreen(vm: ObdyVm) {
 fun FaultsScreen(vm: ObdyVm) {
     var open by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var stateFilter by remember { mutableStateOf<FaultState?>(null) }
     val on = vm.conn == Conn.On
     ScreenFrame("Faults", null) {
         // ---- status summary
@@ -451,7 +462,16 @@ fun FaultsScreen(vm: ObdyVm) {
                 }
                 Hint("Warnings like \"Service Power Steering\", ABS or airbag are stored in their own modules, not the engine. Run a Deep scan to read them.")
             }
-            for ((module, list) in vm.visibleFaults.groupBy { it.module }) {
+            if (vm.visibleFaults.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.clickable { stateFilter = null }) { Pill("All ${vm.visibleFaults.size}", if (stateFilter == null) Brand.Accent else Brand.TextSecondary) }
+                    for (st in FaultState.values()) {
+                        val n = vm.visibleFaults.count { FaultStates.of(it) == st }
+                        if (n > 0) Box(Modifier.clickable { stateFilter = st }) { Pill("${st.label} $n", if (stateFilter == st) Brand.Accent else Brand.TextSecondary) }
+                    }
+                }
+            }
+            for ((module, list) in vm.visibleFaults.filter { stateFilter == null || FaultStates.of(it) == stateFilter }.groupBy { it.module }) {
                 Text("$module  ·  ${list.size}", color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 for (f in list) FaultCard(vm, f, open == f.key, { open = if (open == f.key) null else f.key })
             }
@@ -564,6 +584,8 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
             AppIcon(Ic.Warning, size = 22.dp, color = c)
             Text(f.code, color = c, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Pill(f.kind, Brand.Blue)
+            val fs = FaultStates.of(f)
+            Pill(fs.label, when (fs) { FaultState.Active -> Brand.Red; FaultState.Pending -> Brand.Amber; else -> Brand.TextSecondary })
             Spacer(Modifier.weight(1f))
             if (f.status.isNotBlank()) Text(f.status, color = Brand.TextSecondary, fontSize = 11.sp)
         }
@@ -895,6 +917,7 @@ fun ToolsScreen(vm: ObdyVm) {
         ),
         "Drives and records" to listOf(
             ToolItem(Ic.Car, "Driving mode", "Big gauges and alerts") { vm.overlay = "drive" },
+            ToolItem(Ic.Gauge, "Performance", "0-100, braking, idle time") { vm.overlay = "perf" },
             ToolItem(Ic.Fuel, "Fuel and trips", "Trips, fill-ups, L/100 km") { vm.overlay = "trips" },
             ToolItem(Ic.Chart, "Recordings", "Graphs, compare drives") { vm.overlay = "records" },
             ToolItem(Ic.Chart, "History", "Codes over time, events, links") { vm.overlay = "timeline" },
@@ -904,6 +927,12 @@ fun ToolsScreen(vm: ObdyVm) {
         "Adapter and advanced" to listOf(
             ToolItem(Ic.Plug, "Adapter doctor", "Test the adapter") { vm.overlay = "doctor" },
             ToolItem(Ic.Cpu, "Module data", "Explore what each module tells") { vm.overlay = "explorer" },
+            ToolItem(Ic.Cpu, "Module inventory", "Part numbers, software, VIN check") { vm.overlay = "inventory" },
+            ToolItem(Ic.Plug, "Second bus (pin 1)", "Single-wire GM network scan") { vm.overlay = "buses" },
+            ToolItem(Ic.Terminal, "Bus monitor", "Listen to CAN, find signals") { vm.overlay = "monitor" },
+            ToolItem(Ic.Gauge, "Live signals", "Your named CAN signals, alerts") { vm.overlay = "signals" },
+            ToolItem(Ic.Search, "Data sweep", "Find readable values, watch list") { vm.overlay = "sweep" },
+            ToolItem(Ic.Wrench, "Active tests", "Make a part work, with safety checks") { vm.overlay = "atests" },
             ToolItem(Ic.Terminal, "Console", "Raw commands and log") { vm.overlay = "console" },
         ),
     )

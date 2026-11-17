@@ -57,6 +57,28 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: automatic check and background download (Wi-Fi only by default), kept on the phone until you press Install; a red dot on the gear and a banner on Home show when one is ready. Settings (gear, top-right of every main screen) now holds all settings in one place.
 
+## Pro tools (version 1.14, Tools > Adapter and advanced)
+Built for adapters with the STN command set (vLinker MC+, OBDLink). All of them pause the live data while they work and put the adapter back on the fast bus.
+- **Fault state filter** (Faults): every code shows **Active now / Pending / History** (from the module's own status byte); filter chips on top.
+- **Second bus (pin 1)**: switches the adapter to GM single-wire CAN (`STP 63` = ISO 15765, 11-bit, 33.3 kbit/s; the wake-up uses `STCSWM 2`, then back to
+  normal mode 3), listens, looks for modules at 241-25F and reads their codes. If your car has nothing on pin 1 it tells you so (the fast-bus Deep scan
+  already reaches the ABS, steering, body and other modules on this car).
+- **Module inventory**: part number, software and calibration numbers and the **VIN stored inside every module** (GM `1A` items and UDS `22 F1xx`), with a red
+  "VIN differs" flag for a module that probably came from another car. Share as text.
+- **Bus monitor**: raw CAN frames per id with rate, filters (`STFAP`, up to 4 ids) so the Bluetooth link keeps up, CSV log. **Signal finder**: record quiet,
+  record while you do one thing (door, brake, wheel), and the bytes that changed are listed; save one under a name.
+- **Live signals**: your named signals as big values with **alerts** (for example "Door open", only while driving). Name a signal "Speed" to use it for the moving check.
+- **Data sweep** (read only): asks a module for service-22 identifiers in ranges and lists the ones that answer (raw bytes plus a guess). A safety check allows only
+  read services. **Watch list**: pick a found value, say which bytes and how to scale it, and read it again and again.
+- **Active tests**: the safe wrapper for service 2F / AE / 31 commands. **No commands are built in** (GM does not publish them and none were verified): you enter the
+  ones you trust. The car must stand still, battery above 11.8 V, 30 seconds at most, Stop button, and the "give control back" command is always sent at the end.
+  Writes, ECU reset and security access can never be sent.
+- **Performance**: 0-60 and 0-100 km/h, 100-0 km/h with braking distance, timed from the car's CAN speed with the crossing interpolated; best times and history; CSV.
+  Driving versus idling hours and fuel are counted automatically.
+- Oil life reset steps added to **Relearn guides**.
+Not included, on purpose: Mode 22 misfire/charging identifiers (the numbers for this engine are not published; use Data sweep + Watch list to find them) and
+Firebase cloud logging (share the CSV files, or use the backup folder).
+
 ## Look and feel
 Simple Home (status card plus six icon tiles), an icon grid for Tools, a custom icon set drawn in code (no icon library), animated tab and screen
 transitions, press feedback on buttons and tiles, animated gauges and progress bars, expanding fault cards and a pulsing status dot while connecting.
@@ -104,6 +126,6 @@ is public too: fine for a personal app, but if you want a secret key, add the 4 
 - Part locations are general for this kind of car and the AI's are estimates: confirm with the workshop manual before removing anything.
 
 ## Files
-`app/src/main/java/com/example/obdy`: `Obd.kt` (reply parser), `Pids.kt`, `Dtc.kt` (code decoding + offline database), `Elm.kt` (adapter client), `Transport.kt`
+`app/src/main/java/com/example/obdy`: `Obd.kt` (reply parser), `Bus.kt` + `ProTools.kt` (pro tools: bus switching, monitor, sweep, safety, timers), `Pids.kt`, `Dtc.kt` (code decoding + offline database), `Elm.kt` (adapter client), `Transport.kt`
 (Bluetooth/LE/Wi-Fi), `Gm.kt` (modules and extras), `Calc.kt` (fuel, battery, service, recordings), `ObdyVm.kt` (state), `Gemini.kt`, `Report.kt` (PDF), `Updater.kt`, `ui/`.
-Unit tests: `app/src/test` (parsing, code decoding, formulas, battery, service intervals).
+Unit tests: `app/src/test` (parsing, code decoding, formulas, battery, service intervals, pro tools with a pretend STN adapter).

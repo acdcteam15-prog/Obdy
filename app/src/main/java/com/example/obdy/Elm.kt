@@ -1,5 +1,6 @@
 package com.example.obdy
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -46,7 +47,7 @@ class ElmClient(private val transport: Transport) {
 
     suspend fun query(cmd: String, timeoutMs: Long = 3000): ElmReply = ObdParse.parse(raw(cmd, timeoutMs))
 
-    private suspend fun at(cmd: String): Boolean = raw(cmd, 2500).uppercase().contains("OK")
+    suspend fun at(cmd: String): Boolean = raw(cmd, 2500).uppercase().contains("OK")
 
     private fun ecmFrame(r: ElmReply, service: Int, pid: Int? = null): Frame? {
         val list = r.frames.filter { it.data.isNotEmpty() && it.u(0) == service + 0x40 && (pid == null || it.u(1) == pid) }
@@ -139,13 +140,52 @@ class ElmClient(private val transport: Transport) {
     suspend fun clearEmissionCodes(): Boolean = query("04", 6000).frames.any { it.u(0) == 0x44 }
 
     // ---------------------------------------------------------------- other modules (ABS, airbag, body ...)
+    /** Which physical bus the adapter is on right now. Everything except the explicit single-wire tools runs on the high-speed bus. */
+    private var activeBus = Bus.Hs
+
+    /**
+     * Switches the adapter to the other GM network. The single-wire bus needs an STN adapter (vLinker MC+, OBDLink...): the
+     * adapter says "?" to the STP command otherwise, and this throws an explanation. [aimReset] always returns to the high-speed bus.
+     */
+    suspend fun setBus(bus: Bus) {
+        if (bus == activeBus) return
+        if (bus == Bus.Sw) {
+            val ok = raw("STP${Stn.SW_ISO_11}", 3000).uppercase().contains("OK")
+            if (!ok) throw IllegalStateException("This adapter has no single-wire CAN (pin 1). It needs an STN-based adapter such as the vLinker MC+.")
+            at("STCSWM ${Stn.SWM_NORMAL}")
+            at("ATE0"); at("ATH1"); at("ATCAF1")
+            activeBus = Bus.Sw
+        } else {
+            try { at("ATSP6"); at("ATE0"); at("ATH1"); at("ATCAF1") } finally { activeBus = Bus.Hs }
+        }
+    }
+
+    /** Puts the adapter back on the high-speed bus with normal addressing (after a task that moved it to another module or bus). */
+    suspend fun resetBus() = aimReset()
+
+    /** Wakes sleeping single-wire modules: a short burst in the transceiver's wake-up mode, then back to normal. Read only. */
+    suspend fun wakeSingleWire() {
+        try {
+            at("STCSWM ${Stn.SWM_WAKEUP}")
+            at("ATSH101"); at("ATCRA")
+            raw("3E00", 800)
+            delay(250)
+        } finally {
+            try { at("STCSWM ${Stn.SWM_NORMAL}") } catch (_: Exception) {}
+        }
+    }
+
     private suspend fun aim(p: ModuleProbe) {
+        if (p.bus != activeBus) setBus(p.bus)
         at("ATSH${p.req}"); at("ATCRA${p.resp}")
         // Long answers from the GM body/chassis modules arrived as the first frame only (see the discovery probe log): answer the
         // module's "send the rest" request ourselves, to the module's own address.
         if (!p.req.startsWith("7E")) { at("ATFCSH${p.req}"); at("ATFCSD300000"); at("ATFCSM1") }
     }
-    private suspend fun aimReset() { at("ATFCSM0"); at("ATCRA"); at("ATSH7DF") }
+    private suspend fun aimReset() {
+        if (activeBus != Bus.Hs) { try { setBus(Bus.Hs) } catch (_: Exception) {} }
+        at("ATFCSM0"); at("ATCRA"); at("ATSH7DF")
+    }
 
     /** Functional "1A B0" to everyone (101 + extended address FE). Returns answer id -> diagnostic address. Read only. */
     suspend fun broadcastIdentify(): Map<String, Int?> {
@@ -191,6 +231,14 @@ class ElmClient(private val transport: Transport) {
                 raw.add("1A$did -> " + (r.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" }))
                 if (f != null) items.add(label to Gm.decodeIdent(did, IntArray(f.data.size - 2) { f.u(it + 2) }))
             }
+            // The same facts by UDS data identifiers (22 F1xx), for modules that do not know GM's 1A service.
+            for ((did, label) in Gm.udsIdent) {
+                val r = query("22$did", 1500)
+                val hi = did.substring(0, 2).toInt(16); val lo = did.substring(2).toInt(16)
+                val f = r.frames.firstOrNull { it.u(0) == 0x62 && it.u(1) == hi && it.u(2) == lo }
+                raw.add("22$did -> " + (r.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" }))
+                if (f != null && f.data.size > 3) items.add(label to Gm.decodeIdent("", IntArray(f.data.size - 3) { f.u(it + 3) }))
+            }
             // Standard OBD identity for engine-side modules (09 0A = the module's own name).
             if (m.probe.resp.startsWith("7E")) {
                 val n = query("090A", 3000).frames.firstOrNull { it.u(0) == 0x49 && it.u(1) == 0x0A }
@@ -225,16 +273,17 @@ class ElmClient(private val transport: Transport) {
     }
 
     /** Looks for modules that answer a "tester present" request. Slow (about 10 s), so call it with progress. */
-    suspend fun findModules(onProgress: (Int, Int, String) -> Unit): List<FoundModule> {
+    suspend fun findModules(only: List<ModuleProbe>? = null, onProgress: (Int, Int, String) -> Unit): List<FoundModule> {
         // 1) Ask every module at once which diagnostic address it has (GM functional id 101, read only). This finds modules
         //    that sit outside the fixed address list below.
-        val heard = try { broadcastIdentify() } catch (_: Exception) { emptyMap() }
+        val heard = if (only != null) emptyMap() else try { broadcastIdentify() } catch (_: Exception) { emptyMap() }
         val base = Gm.probes()
         val extra = heard.keys.filter { id -> base.none { it.resp == id } }.mapNotNull { Gm.probeForResponse(it) }
-        val probes = base + extra
+        val probes = only ?: (base + extra)
         val found = ArrayList<FoundModule>()
         try {
-            at("ATST20")
+            if (only != null && only.any { it.bus == Bus.Sw }) { setBus(Bus.Sw); wakeSingleWire() }
+            at(if (only != null) "ATST60" else "ATST20")      // the single-wire bus is 15 times slower: give modules longer
             for ((i, p) in probes.withIndex()) {
                 onProgress(i + 1, probes.size, p.name)
                 aim(p)
@@ -485,6 +534,128 @@ class ElmClient(private val transport: Transport) {
         out.add(if (got >= 3) Verdict("Several values per request", "works", Level.Good, "Fast mode can read 4 values in one request.") else Verdict("Several values per request", "no", Level.Info, "Obdy will read one value at a time (slower but fine)."))
         out.add(Verdict("Live values available", "$supportedCount", if (supportedCount >= 15) Level.Good else if (supportedCount > 0) Level.Info else Level.Warn, "How many standard values the engine computer reports."))
         return out
+    }
+
+    // ---------------------------------------------------------------- pro tools: bus monitor, data sweep, active tests
+    /**
+     * Listens to raw CAN traffic. [bus] picks the network, [filters] are CAN ids to let through (empty = everything; a wide-open
+     * high-speed bus carries far more frames than a Bluetooth adapter can pass on, so a filter is much better).
+     * [seconds] = 0 means until [isCancelled]. [onChunk] gets the text every second or so. Returns an error text, or null when it worked.
+     * Read only: the adapter only listens.
+     */
+    suspend fun monitorSession(bus: Bus, filters: List<String>, wake: Boolean, seconds: Int, isCancelled: () -> Boolean, onChunk: (String) -> Unit): String? {
+        try {
+            if (bus == Bus.Sw) { setBus(Bus.Sw); if (wake) wakeSingleWire() }
+            at("ATCAF0"); at("ATH1"); at("ATS1"); at("ATCRA"); at("STFAC")
+            val use = filters.isNotEmpty()
+            for (f in filters.take(4)) {
+                val id = f.trim().uppercase()
+                if (id.length == 3) at("STFAP $id,7FF") else if (id.length == 8) at("STFAP $id,1FFFFFFF")
+            }
+            val end = if (seconds > 0) System.currentTimeMillis() + seconds * 1000L else Long.MAX_VALUE
+            var chunks = 0
+            while (!isCancelled() && System.currentTimeMillis() < end && chunks < 4000) {
+                val left = end - System.currentTimeMillis()
+                val window = minOf(1500L, left).coerceAtLeast(300L)
+                transport.drain()
+                transport.write(if (use) "STM" else "STMA")
+                var text = transport.readUntilPrompt(window)
+                if (!text.contains(">")) { transport.write(""); text += transport.readUntilPrompt(1500) }
+                onChunk(text)
+                chunks++
+            }
+            return null
+        } catch (e: IllegalStateException) {
+            return e.message
+        } finally {
+            try { at("STFAC"); at("ATCAF1"); aimReset() } catch (_: Exception) {}
+            AppLog.i("[MONITOR] ${bus.name} finished", true)
+        }
+    }
+
+    /**
+     * Read-only sweep of GM / UDS data identifiers (service 22) of one module, from [from] to [to]. Only "22 xxxx" is ever sent.
+     * Returns the next identifier still to do (to + 1 when finished), and a text when it stopped early.
+     */
+    class SweepEnd(val next: Int, val note: String?)
+
+    suspend fun sweepDids(m: FoundModule, from: Int, to: Int, isCancelled: () -> Boolean, onHit: (DidHit) -> Unit, onProgress: (Int) -> Unit): SweepEnd {
+        var did = from
+        var silent = 0; var unsupported = 0
+        try {
+            aim(m.probe); at("ATST32")
+            while (did <= to) {
+                if (isCancelled()) return SweepEnd(did, "Stopped. You can continue from %04X.".format(did))
+                val req = "22%04X".format(did)
+                if (!Safety.isReadOnly(req)) return SweepEnd(did, "Internal safety stop.")
+                val r = query(req, 700)
+                val v = DidSweep.judge(did, r.frames, m.probe.resp)
+                if (v.unsupportedService) { unsupported++; silent = 0 } else unsupported = 0
+                if (v.hit != null) { onHit(v.hit); silent = 0 } else if (r.frames.isEmpty()) silent++ else silent = 0
+                if (unsupported >= 3) return SweepEnd(did + 1, "This module does not use service 22.")
+                if (silent >= 40) return SweepEnd(did + 1, "The module stopped answering (asleep?). Turn the ignition on and continue from %04X.".format(did + 1))
+                did++
+                if (did % 16 == 0) onProgress(did)
+            }
+            return SweepEnd(to + 1, null)
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Runs one active test: sends the start command, keeps the module awake for the time, then ALWAYS sends the stop command
+     * (also after an error or when the user cancels). The caller must have passed [ActiveGuard.refuse] first. Returns the log lines.
+     */
+    suspend fun runActiveTest(def: ActiveTestDef, isCancelled: () -> Boolean): List<String> {
+        val log = ArrayList<String>()
+        val probe = ModuleProbe(def.title, def.req.uppercase(), def.resp.uppercase(), false)
+        val start = ActiveGuard.cleanHex(def.start)
+        val stop = ActiveGuard.cleanHex(def.stop)
+        var started = false
+        try {
+            aim(probe); at("ATSTFF")
+            AppLog.i("[ACTIVE TEST] ${def.title}: start $start to ${def.req}", true)
+            val r = query(start, 3000)
+            log.add("start $start -> " + (r.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" }))
+            started = r.frames.any { it.data.isNotEmpty() && it.u(0) != 0x7F }
+            if (!started) { log.add("The module did not accept the command, nothing was changed."); return log }
+            val end = System.currentTimeMillis() + def.seconds * 1000L
+            while (System.currentTimeMillis() < end && !isCancelled()) {
+                delay(1000)
+                query("3E00", 1000)
+            }
+            return log
+        } finally {
+            if (started && stop.isNotEmpty()) {
+                try {
+                    val r = query(stop, 3000)
+                    log.add("stop $stop -> " + (r.frames.joinToString(" | ") { it.hex() }.ifBlank { "no answer" }))
+                } catch (e: Exception) { log.add("stop command failed: ${e.message}") }
+            }
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+            AppLog.i("[ACTIVE TEST] ${def.title} finished", true)
+        }
+    }
+
+    /** One manufacturer value from any module: request "22 xxxx", returns the data bytes after the echo (null if refused / silent). */
+    suspend fun readWatch(w: WatchDef): IntArray? {
+        val probe = ModuleProbe(w.name, w.req, w.resp, false)
+        aim(probe)
+        val r = query(w.request, 1200)
+        val hi = w.did.substring(0, 2).toInt(16); val lo = w.did.substring(2).toInt(16)
+        val f = r.frames.firstOrNull { it.u(0) == 0x62 && it.u(1) == hi && it.u(2) == lo } ?: return null
+        return IntArray(maxOf(0, f.data.size - 3)) { f.u(it + 3) }
+    }
+
+    /** Speed, rpm and throttle in one request for the performance timers (null when the car does not answer). */
+    suspend fun readPerf(): Map<Int, Double>? {
+        val ids = listOf(0x0D, 0x0C, 0x11)
+        val r = query("01" + ids.joinToString("") { "%02X".format(it) }, 1200)
+        val f = r.frames.firstOrNull { it.header == "7E8" && it.u(0) == 0x41 } ?: r.frames.firstOrNull { it.u(0) == 0x41 }
+        if (f != null) { val m = Pids.parseMulti(f.data); if (m.containsKey(0x0D)) return m }
+        val sp = readPid(Pids.byId(0x0D)!!) ?: return null
+        return mapOf(0x0D to sp)
     }
 
     // ---------------------------------------------------------------- console
