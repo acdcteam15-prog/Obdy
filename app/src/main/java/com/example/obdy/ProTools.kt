@@ -421,6 +421,47 @@ class ProTools(private val vm: ObdyVm) {
         vm.shareFile(f, "text/csv")
     }
 
+    // ------------------------------------------------------------------ lever position as the gearbox computer sees it (value 194F found by the gearbox lab)
+    var leverRunning by mutableStateOf(false)
+    var leverNow by mutableStateOf<Int?>(null)
+    var leverRange by mutableStateOf<Int?>(null)
+    val leverTrail = mutableStateListOf<String>()
+    private val leverDef = WatchDef("Lever", "7E2", "7EA", "194F")
+    private val leverRangeDef = WatchDef("Range switch", "7E2", "7EA", "1951")
+
+    fun startLever() {
+        if (leverRunning) return
+        if (!connected()) { vm.say("Connect to the car first."); return }
+        leverRunning = true; vm.livePaused = true; leverTrail.clear(); leverNow = null; leverRange = null
+        scope.launch {
+            try {
+                var last: Int? = null
+                var misses = 0
+                val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                while (leverRunning && vm.conn == Conn.On) {
+                    val g = vm.withCar { readWatch(leverDef) }?.firstOrNull()
+                    if (g == null) {
+                        if (++misses > 6) { vm.say("The gearbox computer is not answering."); break }
+                        delay(300); continue
+                    }
+                    misses = 0
+                    leverNow = g
+                    if (g != last) {
+                        if (last == 0x04 && g == 0x08) leverTrail.add(0, "Neutral went straight to Manual: the gearbox computer never saw Drive between them")
+                        leverTrail.add(0, fmt.format(java.util.Date()) + "  " + Gm.leverName(g))
+                        last = g
+                    }
+                    leverRange = vm.withCar { readWatch(leverRangeDef) }?.firstOrNull()
+                    delay(100)
+                }
+            } catch (e: Exception) {
+                vm.say("Lever watch stopped: " + (e.message ?: "adapter error"))
+            } finally { leverRunning = false; vm.livePaused = false }
+        }
+    }
+
+    fun stopLever() { leverRunning = false }
+
     // ------------------------------------------------------------------ network watch (which module drops out, with the voltage)
     class NetEvent(val atMs: Long, val text: String)
     var netRunning by mutableStateOf(false)

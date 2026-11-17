@@ -28,14 +28,25 @@ class ElmClient(private val transport: Transport) {
 
     // ---------------------------------------------------------------- low level (call inside exclusive)
     suspend fun raw(cmd: String, timeoutMs: Long = 3000): String {
-        transport.drain()
-        transport.write(cmd)
-        val r = transport.readUntilPrompt(timeoutMs)
         val keep = !isPolling(cmd)
-        AppLog.i(">> $cmd", keep)
-        AppLog.i("<< " + r.replace('\r', ' ').replace('\n', ' ').trim(), keep)
+        transport.drain()
+        AppLog.i(">> $cmd", keep)                                  // logged BEFORE it is sent, so a command that hangs or kills the link is still on record
+        val t0 = System.nanoTime()
+        val r = try {
+            transport.write(cmd)
+            transport.readUntilPrompt(timeoutMs)
+        } catch (e: Exception) {
+            AppLog.i("!! $cmd failed: ${e.javaClass.simpleName}: ${e.message}", true)
+            throw e
+        }
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        AppLog.i("<< " + r.replace('\r', ' ').replace('\n', ' ').trim() + "   [${ms} ms]", keep)
         return r
     }
+
+    /** Logging for the monitor, which talks to the adapter directly. */
+    private fun logTx(cmd: String) = AppLog.i(">> ${if (cmd.isEmpty()) "(stop: carriage return)" else cmd}", true)
+    private fun logRx(text: String) { val t = text.replace('\r', ' ').replace('\n', ' ').trim(); if (t.isNotEmpty()) AppLog.i("<< $t", true) }
 
     /** Live polling (one value at a time, the manufacturer values and the header switches around them) is not kept in the long log. */
     private fun isPolling(cmd: String): Boolean {
@@ -597,10 +608,11 @@ class ElmClient(private val transport: Transport) {
             var restarts = 0
             var reads = 0
             transport.drain()
-            transport.write(cmd)
+            logTx(cmd); transport.write(cmd)
             while (!isCancelled() && System.currentTimeMillis() < end && reads < 100_000) {
                 val window = minOf(400L, end - System.currentTimeMillis()).coerceAtLeast(100L)
                 val text = transport.readUntilPrompt(window)
+                logRx(text)
                 reads++
                 val stopped = text.contains(">")
                 val whole = carry + text.replace(">", "")
@@ -612,14 +624,14 @@ class ElmClient(private val transport: Transport) {
                 if (done.isNotBlank()) onChunk(done)
                 if (stopped && !isCancelled() && System.currentTimeMillis() < end) {        // the adapter ended the run by itself: start it again
                     if (++restarts > 25) break
-                    transport.write(cmd)
+                    logTx(cmd); transport.write(cmd)
                 }
             }
             // stop the run and take the frames still on their way
-            transport.write("")
+            logTx(""); transport.write("")
             var tail = carry
             var waited = 0
-            while (waited < 6 && !tail.contains(">")) { tail += transport.readUntilPrompt(700); waited++ }
+            while (waited < 6 && !tail.contains(">")) { val more = transport.readUntilPrompt(700); logRx(more); tail += more; waited++ }
             if (tail.isNotBlank()) onChunk(tail)
             return null
         } catch (e: IllegalStateException) {

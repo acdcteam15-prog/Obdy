@@ -33,6 +33,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -889,77 +890,107 @@ fun OdoFinderPanel(vm: ObdyVm) {
 // ====================================================================================== Tools
 private class ToolItem(val ic: Ic, val title: String, val sub: String, val open: () -> Unit)
 
+private class ToolGroup(val name: String, val ic: Ic, val note: String?, val items: List<ToolItem>)
+
 @Composable
 fun ToolsScreen(vm: ObdyVm) {
     var query by remember { mutableStateOf("") }
+    var openGroup by remember { mutableStateOf<String?>("Diagnose") }
     val start = listOf(
-        ToolItem(Ic.Battery, "Battery test", "Start, charging, drive log") { vm.overlay = "battery" },
-        ToolItem(Ic.Wrench, "Power steering check", "For 'Service Power Steering'") { vm.overlay = "steering" },
+        ToolItem(Ic.Battery, "Battery test", "Start, charging") { vm.overlay = "battery" },
+        ToolItem(Ic.Heart, "Health check", "Idle test, trends") { vm.overlay = "health" },
+        ToolItem(Ic.Wrench, "Power steering", "Service Power Steering") { vm.overlay = "steering" },
         ToolItem(Ic.Search, "Find the cause", "Questions, then a fix") { vm.gCode = null; vm.overlay = "guided" },
-        ToolItem(Ic.Pin, "Where is the part?", "Diagram of your Malibu") { vm.showParts(null) },
     )
     val groups = listOf(
-        "Diagnose" to listOf(
-            ToolItem(Ic.Heart, "Health check", "Idle test and trends") { vm.overlay = "health" },
+        ToolGroup("Diagnose", Ic.Cpu, null, listOf(
             ToolItem(Ic.Cpu, "Engine self-tests", "Misfire counts, catalyst") { vm.overlay = "tests" },
-            ToolItem(Ic.Cpu, "Gearbox", "Hard shifts, forward and reverse") { vm.overlay = "gearbox" },
+            ToolItem(Ic.Cpu, "Gearbox", "Shifts, live lever position") { vm.overlay = "gearbox" },
+            ToolItem(Ic.Cpu, "Network watch", "Which module drops out") { vm.overlay = "netwatch" },
+            ToolItem(Ic.Cpu, "Module inventory", "Part numbers, software, VIN") { vm.overlay = "inventory" },
             ToolItem(Ic.Shield, "Inspection check", "Ready for the test?") { vm.overlay = "inspection" },
             ToolItem(Ic.Doc, "PDF report", "For your mechanic") { vm.makeReport() },
-        ),
-        "AI" to listOf(
-            ToolItem(Ic.Chat, "Claude Lab", "Chat with photos and session data") { vm.tab = 5 },
+        )),
+        ToolGroup("Ask and check", Ic.Chat, null, listOf(
+            ToolItem(Ic.Chat, "Claude Lab", "Chat with photos and data") { vm.tab = 5 },
             ToolItem(Ic.Camera, "Quote checker", "Photo of a workshop quote") { vm.overlay = "quote" },
-            ToolItem(Ic.Globe, "Online checks", "Recalls, web, research") { vm.overlay = "online" },
-        ),
-        "Fix and learn" to listOf(
+            ToolItem(Ic.Globe, "Online checks", "Recalls and research") { vm.overlay = "online" },
+        )),
+        ToolGroup("Fix and find", Ic.Wrench, null, listOf(
             ToolItem(Ic.Wrench, "Relearn guides", "After battery or cleaning") { vm.overlay = "relearn" },
-            ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse, see where") { vm.fuseSel = null; vm.overlay = "fuses" },
-            ToolItem(Ic.Doc, "Car guide", "Specs, schedule, lights") { vm.overlay = "guide" },
-            ToolItem(Ic.Check, "Checklists", "Before a trip, summer") { vm.overlay = "checklist" },
-        ),
-        "Drives and records" to listOf(
+            ToolItem(Ic.Pin, "Where is the part?", "Diagram of your Malibu") { vm.showParts(null) },
+            ToolItem(Ic.Plug, "Fuse boxes", "Find a fuse") { vm.fuseSel = null; vm.overlay = "fuses" },
+        )),
+        ToolGroup("Drive and costs", Ic.Car, null, listOf(
             ToolItem(Ic.Car, "Driving mode", "Big gauges and alerts") { vm.overlay = "drive" },
             ToolItem(Ic.Gauge, "Performance", "0-100, braking, idle time") { vm.overlay = "perf" },
-            ToolItem(Ic.Cpu, "Network watch", "Which module drops out, with voltage") { vm.overlay = "netwatch" },
             ToolItem(Ic.Fuel, "Fuel and trips", "Trips, fill-ups, L/100 km") { vm.overlay = "trips" },
-            ToolItem(Ic.Chart, "Recordings", "Graphs, compare drives") { vm.overlay = "records" },
-            ToolItem(Ic.Chart, "History", "Codes over time, events, links") { vm.overlay = "timeline" },
-            ToolItem(Ic.Cash, "Repairs and costs", "History and receipts") { vm.overlay = "expenses" },
             ToolItem(Ic.Cpu, "Parts register", "Fitted parts and warranty") { vm.overlay = "partsreg" },
-        ),
-        "Adapter and advanced" to listOf(
+        )),
+        ToolGroup("Expert", Ic.Terminal, "Raw adapter and network tools. They only listen and ask; nothing is changed except in Active tests, which has safety checks.", listOf(
             ToolItem(Ic.Plug, "Adapter doctor", "Test the adapter") { vm.overlay = "doctor" },
-            ToolItem(Ic.Cpu, "Module data", "Explore what each module tells") { vm.overlay = "explorer" },
-            ToolItem(Ic.Cpu, "Module inventory", "Part numbers, software, VIN check") { vm.overlay = "inventory" },
-            ToolItem(Ic.Plug, "Second bus (pin 1)", "Single-wire GM network scan") { vm.overlay = "buses" },
+            ToolItem(Ic.Plug, "Second bus (pin 1)", "Single-wire GM network") { vm.overlay = "buses" },
             ToolItem(Ic.Terminal, "Bus monitor", "Listen to CAN, find signals") { vm.overlay = "monitor" },
-            ToolItem(Ic.Gauge, "Live signals", "Your named CAN signals, alerts") { vm.overlay = "signals" },
-            ToolItem(Ic.Search, "Data sweep", "Find readable values, watch list") { vm.overlay = "sweep" },
-            ToolItem(Ic.Wrench, "Active tests", "Make a part work, with safety checks") { vm.overlay = "atests" },
+            ToolItem(Ic.Gauge, "Live signals", "Your named CAN signals") { vm.overlay = "signals" },
+            ToolItem(Ic.Search, "Data sweep", "Find readable values") { vm.overlay = "sweep" },
+            ToolItem(Ic.Wrench, "Active tests", "Make a part work, guarded") { vm.overlay = "atests" },
             ToolItem(Ic.Terminal, "Console", "Raw commands and log") { vm.overlay = "console" },
-        ),
+        )),
     )
-    ScreenFrame("Tools", null, subtitle = "${start.size + groups.sumOf { it.second.size }} tools") {
-        Field("Search tools", query, { query = it })
+    val all = start + groups.flatMap { it.items }
+    ScreensFrameTools(vm, query, { query = it }, start, groups, all, openGroup) { openGroup = if (openGroup == it) null else it }
+}
+
+@Composable
+private fun ScreensFrameTools(
+    vm: ObdyVm, query: String, onQuery: (String) -> Unit, start: List<ToolItem>, groups: List<ToolGroup>, all: List<ToolItem>,
+    openGroup: String?, toggle: (String) -> Unit,
+) {
+    ScreenFrame("Tools", null, subtitle = "${all.size} tools in ${groups.size} groups") {
+        Field("Search tools", query, onQuery)
         val q = query.trim()
         if (q.isNotEmpty()) {
-            val hits = (start + groups.flatMap { it.second }).filter { it.title.contains(q, true) || it.sub.contains(q, true) }
+            val hits = all.filter { it.title.contains(q, true) || it.sub.contains(q, true) }
             if (hits.isEmpty()) Hint("No tool matches \"$q\".")
             Panel { for (t in hits) ToolRow(t) }
         } else {
-            Reveal(0) { Text("Most used", color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            start.chunked(2).forEachIndexed { row, pair ->
-                Reveal(1 + row) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        for (t in pair) Tile(t.ic, t.title, t.sub, Modifier.weight(1f), accent = row == 0 && t == pair.first()) { t.open() }
+            Reveal(0) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    start.chunked(2).forEachIndexed { row, pair ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            for (t in pair) Tile(t.ic, t.title, t.sub, Modifier.weight(1f), accent = row == 0 && t == pair.first()) { t.open() }
+                        }
                     }
                 }
             }
-            groups.forEachIndexed { gi, (name, items) ->
-                Reveal(3 + gi) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(name, color = Brand.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Panel { items.forEachIndexed { i, t -> ToolRow(t); if (i < items.size - 1) Box(Modifier.fillMaxWidth().height(1.dp).background(Brand.CardBorder.copy(alpha = 0.6f))) } }
+            groups.forEachIndexed { gi, g ->
+                Reveal(1 + gi) {
+                    val open = openGroup == g.name
+                    val turn by animateFloatAsState(if (open) 90f else 0f, tween(180), label = "turn")
+                    Panel {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { com.example.obdy.AppLog.i("[YOU] tapped group \"${g.name}\""); toggle(g.name) }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Brand.Accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) { AppIcon(g.ic, size = 20.dp, color = Brand.Accent) }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(g.name, color = Brand.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                Text(g.items.take(3).joinToString(", ") { it.title } + if (g.items.size > 3) "…" else "", color = Brand.TextSecondary, fontSize = 12.sp, maxLines = 1)
+                            }
+                            Text("${g.items.size}", color = Brand.TextSecondary, fontSize = 13.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("›", color = Brand.TextSecondary, fontSize = 22.sp, modifier = Modifier.rotate(turn))
+                        }
+                        AnimatedVisibility(open) {
+                            Column {
+                                g.note?.let { Hint(it) }
+                                g.items.forEachIndexed { i, t ->
+                                    if (i > 0 || g.note != null) Box(Modifier.fillMaxWidth().height(1.dp).background(Brand.CardBorder.copy(alpha = 0.6f)))
+                                    ToolRow(t)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -972,7 +1003,7 @@ fun ToolsScreen(vm: ObdyVm) {
 private fun ToolRow(t: ToolItem) {
     val haptic = LocalHapticFeedback.current
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); t.open() }.padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.example.obdy.AppLog.i("[YOU] tapped tool \"${t.title}\""); t.open() }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Brand.Accent.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) { AppIcon(t.ic, size = 19.dp, color = Brand.Accent) }

@@ -10,6 +10,9 @@ class ExtPid(
 )
 
 object Gm {
+    /** Gearbox computer value 194F, read in each lever position on this Malibu (your own log, 15:46-15:48): P 01, R 02, N 04, D 06, M 08. */
+    fun leverName(v: Int): String = when (v) { 0x01 -> "Park"; 0x02 -> "Reverse"; 0x04 -> "Neutral"; 0x06 -> "Drive"; 0x08 -> "Manual"; else -> "unknown value %02X".format(v) }
+
     /**
      * Standard OBD-II modules are certain (engine 7E0, transmission 7E2). The other addresses are a search: GM chassis and body
      * modules on 11-bit CAN usually answer from request + 0x400. The scan reports what actually answers, with the raw address,

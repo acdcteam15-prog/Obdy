@@ -287,6 +287,8 @@ class BusTest {
         assertEquals(true, res["A"]); assertEquals(false, res["B"])
     }
 
+    @Test fun leverNamesMatchTheLog() { assertEquals("Drive", Gm.leverName(6)); assertEquals("Park", Gm.leverName(1)); assertEquals("Manual", Gm.leverName(8)) }
+
     @Test fun sweepStopsOnSilence() = runBlocking {
         val tr = stn { c -> if (c.startsWith("22")) "NO DATA" else null }
         val c = ElmClient(tr)

@@ -20,7 +20,7 @@ object AppLog {
     private val full = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
     private const val MAX = 600
     private const val MAX_KEPT = 1500
-    private const val MAX_FILE = 40L * 1024 * 1024   // above this the oldest half is dropped
+    private const val MAX_FILE = 300L * 1024 * 1024  // above this the oldest half is dropped (a long day is about 20 MB)
 
     // ---- complete log on disk: every line since the first start, until the owner deletes it
     private var file: File? = null
@@ -57,6 +57,7 @@ object AppLog {
         while (lines.size > MAX) lines.pollFirst()
         if (keep) { kept.addLast(l); while (kept.size > MAX_KEPT) kept.pollFirst() }
         toDisk(l)
+        if (msg.startsWith("[YOU]") || msg.startsWith("[APP]") || msg.startsWith("!!")) flush()   // what you did must survive a crash
     }
 
     fun dump(): String = lines.joinToString("\n")

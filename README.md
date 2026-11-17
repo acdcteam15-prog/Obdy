@@ -142,3 +142,13 @@ Unit tests: `app/src/test` (parsing, code decoding, formulas, battery, service i
 - Network watch (Tools > Drives and records): asks every module you found whether it is still there about every two seconds, reads the battery voltage, and writes down when a module drops out or the voltage falls. Share the report with your mechanic.
 - Faults screen: "What GM service information says" for C047A, C0710, C0544/U0415, C056D/C056E/C0569 and the U0074/U0077 network codes.
 
+
+### 1.14.3
+- Gearbox screen: live "Lever position" from the gearbox computer (value 194F, found by your own lever test: P 01, R 02, N 04, D 06, M 08). Move the lever slowly and see whether the computer sees Drive when the dash skips it.
+
+### 1.14.4
+- Tools page rebuilt: four quick tiles (battery, health check, power steering, find the cause) and five collapsible groups (Diagnose, Ask and check, Fix and find, Drive and costs, Expert). Entries that duplicated other screens (Car guide, History, Recordings, Repairs and costs, Module data, Checklists) were removed from this page.
+
+### 1.14.5 (the log records everything)
+- Every command to the adapter is written to the log BEFORE it is sent, then the answer with its time in ms; failures are logged with "!!". The bus monitor now logs its start, stop and every chunk of frames too.
+- Every tap (with the screen it landed on), swipe, named button, tile, chip and typed field (keys and passwords are hidden), app foreground/background/close, connect and disconnect are logged. Log limit raised to 300 MB; your own actions are flushed to disk at once.

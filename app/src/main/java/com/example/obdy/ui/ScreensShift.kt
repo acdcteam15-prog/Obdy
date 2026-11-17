@@ -18,6 +18,7 @@ fun GearboxScreen(vm: ObdyVm) {
             Title("What this can and cannot do")
             Hint("This car's gearbox computer does not share its own data over the standard connection (no gear, clutch or fluid values). Obdy works around that: it records engine speed and vehicle speed many times a second and finds the gear changes from them. The results are indicators to compare between drives and to show a workshop, not a diagnosis.")
         }
+        LeverPanel(vm)
         if (vm.gearBusy) {
             Panel {
                 Title("Recording... ${vm.gearSecs} s")

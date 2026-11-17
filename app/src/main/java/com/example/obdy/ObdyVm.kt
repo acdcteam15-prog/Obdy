@@ -224,6 +224,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     private fun connect(t: Transport, kind: String, address: String) {
+        AppLog.i("[YOU] connect via $kind $address", true)
         if (conn == Conn.Connecting) return
         disconnect()
         reconnectEnabled = true
@@ -274,6 +275,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        AppLog.i("[APP] disconnecting (you pressed it, or a new connection is starting)", true)
         connectJob?.cancel()
         liveJob?.cancel(); liveJob = null; liveRunning = false
         liveReasons.remove("flight"); screenLive = liveReasons.any { it != "flight" }

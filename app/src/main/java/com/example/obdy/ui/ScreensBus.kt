@@ -45,13 +45,14 @@ import com.example.obdy.DidHit
 import com.example.obdy.DidState
 import com.example.obdy.DidSweep
 import com.example.obdy.FaultStates
+import com.example.obdy.Gm
 import com.example.obdy.ObdyVm
 import com.example.obdy.WatchDef
 
 // ====================================================================================== shared bits
 @Composable
 private fun Choice(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.clickable(onClick = onClick)) { Pill(text, if (selected) Brand.Accent else Brand.TextSecondary) }
+    Box(Modifier.clickable { com.example.obdy.AppLog.i("[YOU] picked \"$text\""); onClick() }) { Pill(text, if (selected) Brand.Accent else Brand.TextSecondary) }
 }
 
 @Composable
@@ -560,5 +561,24 @@ fun NetWatchScreen(vm: ObdyVm) {
             Hint("The Deep scan report, the Module inventory (part and software numbers), and this network report. Ask them to check for newer software for the power steering, brake and body modules and to read the codes with GM's own tool.")
             SoftButton("Open the Module inventory", Modifier.fillMaxWidth()) { vm.overlay = "inventory" }
         }
+    }
+}
+
+/** Live lever position from the gearbox computer (used on the Gearbox screen). */
+@Composable
+fun LeverPanel(vm: ObdyVm) {
+    val p = vm.pro
+    DisposableEffect(Unit) { onDispose { p.stopLever() } }
+    Panel {
+        Title("Lever position, live")
+        Hint("In your own test the gearbox computer reported the lever as value 194F: Park 01, Reverse 02, Neutral 04, Drive 06, Manual 08. Start this, then move the lever slowly with your foot on the brake through P, R, N, D and M, and compare with the dash. If the computer sees Drive when the dash skips it, the fault points to the display or the network link to it. If the computer skips Drive too, the lever position sensor, the shift cable or the gearbox computer are the places to look. It is read about three times a second, so move slowly.")
+        NeedCar(vm)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GradientButton(if (p.leverRunning) "Watching..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.leverRunning && vm.conn == Conn.On) { p.startLever() }
+            SoftButton("Stop", Modifier.weight(1f), enabled = p.leverRunning) { p.stopLever() }
+        }
+        p.leverNow?.let { Text(Gm.leverName(it), color = Brand.TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
+        p.leverRange?.let { Label("Range switch bits: %02X".format(it), size = 13) }
+        for (line in p.leverTrail.take(12)) Label(line, size = 13)
     }
 }

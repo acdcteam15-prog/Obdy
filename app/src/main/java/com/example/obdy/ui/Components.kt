@@ -102,7 +102,7 @@ fun GradientButton(text: String, brush: Brush, modifier: Modifier = Modifier, en
                     drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.18f), Color.Transparent), start = Offset(x - 120f, 0f), end = Offset(x + 120f, size.height)))
                 }
             }
-            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
+            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.example.obdy.AppLog.i("[YOU] tapped \"$text\""); onClick() }
             .padding(vertical = 15.dp, horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -121,7 +121,7 @@ fun SoftButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = t
             .clip(RoundedCornerShape(14.dp))
             .background(if (pressed) Brand.Accent.copy(alpha = 0.12f) else Color.Transparent)
             .border(1.dp, if (enabled) Brand.Accent.copy(alpha = 0.7f) else Brand.CardBorder, RoundedCornerShape(14.dp))
-            .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .clickable(interactionSource = src, indication = null, enabled = enabled) { com.example.obdy.AppLog.i("[YOU] tapped \"$text\""); onClick() }
             .padding(vertical = 11.dp, horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -143,7 +143,7 @@ fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier,
             .clip(shape)
             .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, if (accent) 0.10f else 0.04f), Brand.Card)))
             .border(1.dp, if (accent && enabled) Brand.Accent.copy(alpha = 0.6f) else Brand.CardBorder, shape)
-            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
+            .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.example.obdy.AppLog.i("[YOU] tapped tile \"$title\""); onClick() }
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -215,7 +215,7 @@ fun levelColor(l: Level): Color = when (l) {
 @Composable
 fun Field(label: String, value: String, onChange: (String) -> Unit, number: Boolean = false, singleLine: Boolean = true, modifier: Modifier = Modifier) {
     OutlinedTextField(
-        value = value, onValueChange = onChange, label = { Text(label) }, singleLine = singleLine,
+        value = value, onValueChange = { com.example.obdy.AppLog.i("[YOU] typed in \"$label\": " + (if (Regex("key|token|password|secret", RegexOption.IGNORE_CASE).containsMatchIn(label)) "(${it.length} characters, hidden)" else it)); onChange(it) }, label = { Text(label) }, singleLine = singleLine,
         keyboardOptions = if (number) KeyboardOptions(keyboardType = KeyboardType.Decimal) else KeyboardOptions.Default,
         modifier = modifier.fillMaxWidth(),
     )

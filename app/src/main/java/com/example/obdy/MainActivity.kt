@@ -92,7 +92,28 @@ class MainActivity : AppCompatActivity() {
         handleOpen(intent)
     }
 
+    /** Every touch that is a tap (not a scroll) goes in the log with the screen it landed on. Taps on named buttons are also logged by name. */
+    private var downX = 0f; private var downY = 0f
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        try {
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { downX = ev.x; downY = ev.y }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val moved = Math.hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble())
+                    val where = vm.overlay ?: listOf("Home", "Live", "Faults", "Tools", "Car", "Lab").getOrElse(vm.tab) { "tab ${vm.tab}" }
+                    AppLog.i(if (moved < 24) "[YOU] tap at ${ev.x.toInt()},${ev.y.toInt()} on $where" else "[YOU] swipe/scroll ${(ev.x - downX).toInt()},${(ev.y - downY).toInt()} on $where")
+                }
+            }
+        } catch (_: Exception) { }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onPause() { AppLog.i("[APP] app went to the background"); super.onPause() }
+    override fun onStop() { AppLog.i("[APP] app not visible"); AppLog.flush(); super.onStop() }
+    override fun onDestroy() { AppLog.i("[APP] app closed (or rotated)"); AppLog.flush(); super.onDestroy() }
+
     override fun onResume() {
+        AppLog.i("[APP] app in the foreground")
         super.onResume()
         vm.refreshPermission()
         vm.refreshUpdateState()
