@@ -189,7 +189,7 @@ class BusTest {
         val c = ElmClient(tr)
         val got = StringBuilder()
         var n = 0
-        val err = c.exclusive { monitorSession(Bus.Sw, listOf("241"), false, 0, { n++ >= 2 }) { got.append(it) } }
+        val err = c.exclusive { monitorSession(Bus.Sw, listOf("241"), false, 0, { n++ >= 8 }) { got.append(it) } }
         assertNull(err)
         assertTrue(tr.sent.contains("STP63"))
         assertTrue(tr.sent.any { it.startsWith("STFAP 241,7FF") })
@@ -208,7 +208,8 @@ class BusTest {
     }
 
     @Test fun sweepOnlySendsServiceTwentyTwoAndFindsHits() = runBlocking {
-        val tr = stn { c ->
+        val tr = stn { raw ->
+            val c = if (raw.length == 7 && raw.startsWith("22")) raw.dropLast(1) else raw          // the sweep adds a response count digit
             when {
                 c.startsWith("ATSH") || c.startsWith("ATCRA") || c.startsWith("ATST") -> "OK"
                 c == "220102" -> "644 04 62 01 02 AB"

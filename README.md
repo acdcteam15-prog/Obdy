@@ -129,3 +129,9 @@ is public too: fine for a personal app, but if you want a secret key, add the 4 
 `app/src/main/java/com/example/obdy`: `Obd.kt` (reply parser), `Bus.kt` + `ProTools.kt` (pro tools: bus switching, monitor, sweep, safety, timers), `Pids.kt`, `Dtc.kt` (code decoding + offline database), `Elm.kt` (adapter client), `Transport.kt`
 (Bluetooth/LE/Wi-Fi), `Gm.kt` (modules and extras), `Calc.kt` (fuel, battery, service, recordings), `ObdyVm.kt` (state), `Gemini.kt`, `Report.kt` (PDF), `Updater.kt`, `ui/`.
 Unit tests: `app/src/test` (parsing, code decoding, formulas, battery, service intervals, pro tools with a pretend STN adapter).
+
+### 1.14.1 (from your first real recordings)
+- Bus monitor now runs as one continuous recording (before, it stopped and restarted every 1.5 s, lost the adapter's backlog and cut frames in half). A frame cut at the end of a read is finished by the next read.
+- After a recording the app tells you frames per second and warns when the adapter could not pass every frame to the phone. On the busy fast bus (pins 6+14) filter on one to four ids for a complete recording.
+- Signal finder ignores ids with fewer than 6 frames in either recording.
+- Data sweep is several times faster (each request now says "one answer expected", so the adapter no longer waits out its 200 ms timeout).

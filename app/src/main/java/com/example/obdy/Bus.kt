@@ -134,8 +134,9 @@ object SignalFinder {
     fun find(base: Capture, act: Capture): List<Candidate> {
         val out = ArrayList<Candidate>()
         for ((id, a) in act.ids) {
-            if (a.count < 2) continue
+            if (a.count < 6) continue                                                    // too few frames to judge (a thin capture only shows noise)
             val b = base.ids[id]
+            if (b != null && b.count < 6) continue
             for (i in 0 until 8) {
                 if (a.distinct(i) == 0) continue
                 if (b != null && b.distinct(i) >= 12) continue                         // counter / checksum in the quiet capture

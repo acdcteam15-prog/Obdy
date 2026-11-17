@@ -150,8 +150,14 @@ class ProTools(private val vm: ObdyVm) {
                         c.add(CanParse.parse(t, now)); c.overflow += CanParse.overflows(t); c.endMs = now; capTick++
                     }
                 }
-                if (err != null) vm.say(err)
                 c.endMs = System.currentTimeMillis()
+                if (err != null) vm.say(err) else {
+                    val secs = ((c.endMs - c.startMs) / 1000.0).coerceAtLeast(0.1)
+                    val n = c.ids.values.sumOf { it.count }
+                    val thin = if (c.overflow > 0 || (filters.isEmpty() && bus == Bus.Hs && n / secs < 400))
+                        " The adapter could not pass every frame to the phone. Filter on one to four ids for a complete recording." else ""
+                    vm.say("$n frames, ${c.ids.size} ids, %.0f frames per second.$thin".format(n / secs))
+                }
                 val base = finderBase
                 if (slot == "act" && base != null) {
                     candidates = SignalFinder.find(base, c)

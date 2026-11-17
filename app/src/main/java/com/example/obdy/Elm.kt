@@ -553,17 +553,37 @@ class ElmClient(private val transport: Transport) {
                 if (id.length == 3) at("STFAP $id,7FF") else if (id.length == 8) at("STFAP $id,1FFFFFFF")
             }
             val end = if (seconds > 0) System.currentTimeMillis() + seconds * 1000L else Long.MAX_VALUE
-            var chunks = 0
-            while (!isCancelled() && System.currentTimeMillis() < end && chunks < 4000) {
-                val left = end - System.currentTimeMillis()
-                val window = minOf(1500L, left).coerceAtLeast(300L)
-                transport.drain()
-                transport.write(if (use) "STM" else "STMA")
-                var text = transport.readUntilPrompt(window)
-                if (!text.contains(">")) { transport.write(""); text += transport.readUntilPrompt(1500) }
-                onChunk(text)
-                chunks++
+            val cmd = if (use) "STM" else "STMA"
+            // One continuous monitor run (the old stop-and-restart every 1.5 s threw the adapter's backlog away and cut frames in half).
+            // A frame that is cut at the end of one read is kept and finished by the next read.
+            var carry = ""
+            var restarts = 0
+            var reads = 0
+            transport.drain()
+            transport.write(cmd)
+            while (!isCancelled() && System.currentTimeMillis() < end && reads < 100_000) {
+                val window = minOf(400L, end - System.currentTimeMillis()).coerceAtLeast(100L)
+                val text = transport.readUntilPrompt(window)
+                reads++
+                val stopped = text.contains(">")
+                val whole = carry + text.replace(">", "")
+                val cut = whole.lastIndexOfAny(charArrayOf('\r', '\n'))
+                val done: String
+                if (stopped || cut < 0 && whole.length > 400) { done = whole; carry = "" }
+                else if (cut >= 0) { done = whole.substring(0, cut + 1); carry = whole.substring(cut + 1) }
+                else { done = ""; carry = whole }
+                if (done.isNotBlank()) onChunk(done)
+                if (stopped && !isCancelled() && System.currentTimeMillis() < end) {        // the adapter ended the run by itself: start it again
+                    if (++restarts > 25) break
+                    transport.write(cmd)
+                }
             }
+            // stop the run and take the frames still on their way
+            transport.write("")
+            var tail = carry
+            var waited = 0
+            while (waited < 6 && !tail.contains(">")) { tail += transport.readUntilPrompt(700); waited++ }
+            if (tail.isNotBlank()) onChunk(tail)
             return null
         } catch (e: IllegalStateException) {
             return e.message
@@ -588,7 +608,7 @@ class ElmClient(private val transport: Transport) {
                 if (isCancelled()) return SweepEnd(did, "Stopped. You can continue from %04X.".format(did))
                 val req = "22%04X".format(did)
                 if (!Safety.isReadOnly(req)) return SweepEnd(did, "Internal safety stop.")
-                val r = query(req, 700)
+                val r = query(req + "1", 700)                                                // trailing "1": one answer expected, so the adapter does not wait out its timeout
                 val v = DidSweep.judge(did, r.frames, m.probe.resp)
                 if (v.unsupportedService) { unsupported++; silent = 0 } else unsupported = 0
                 if (v.hit != null) { onHit(v.hit); silent = 0 } else if (r.frames.isEmpty()) silent++ else silent = 0
