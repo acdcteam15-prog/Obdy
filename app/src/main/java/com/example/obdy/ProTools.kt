@@ -421,6 +421,71 @@ class ProTools(private val vm: ObdyVm) {
         vm.shareFile(f, "text/csv")
     }
 
+    // ------------------------------------------------------------------ network watch (which module drops out, with the voltage)
+    class NetEvent(val atMs: Long, val text: String)
+    var netRunning by mutableStateOf(false)
+    var netRounds by mutableStateOf(0)
+    var netVolt by mutableStateOf<Double?>(null)
+    var netMinVolt by mutableStateOf<Double?>(null)
+    var netMaxVolt by mutableStateOf<Double?>(null)
+    var netStartMs by mutableStateOf(0L)
+    val netState = mutableStateMapOf<String, Boolean>()
+    val netEvents = mutableStateListOf<NetEvent>()
+
+    fun startNetWatch() {
+        if (netRunning || capBusy != null || !connected()) return
+        val mods = vm.foundModulesList().map { it.probe }.filter { it.bus == Bus.Hs }
+        if (mods.isEmpty()) { vm.say("Run a Deep scan first so Obdy knows the modules."); return }
+        netRunning = true; vm.livePaused = true
+        netRounds = 0; netEvents.clear(); netState.clear(); netMinVolt = null; netMaxVolt = null; netStartMs = System.currentTimeMillis()
+        scope.launch {
+            try {
+                var lastLow = false
+                while (netRunning && vm.conn == Conn.On) {
+                    val res = vm.withCar { pingModules(mods) }
+                    if (res == null) { delay(400); continue }
+                    val (v, round) = res
+                    val now = System.currentTimeMillis()
+                    netRounds++
+                    if (v != null) {
+                        netVolt = v
+                        netMinVolt = minOf(netMinVolt ?: v, v); netMaxVolt = maxOf(netMaxVolt ?: v, v)
+                        val low = v < 11.8
+                        if (low != lastLow) { netEvents.add(0, NetEvent(now, if (low) "Battery voltage fell below 11.8 V (%.1f V)".format(v) else "Battery voltage back above 11.8 V (%.1f V)".format(v))); lastLow = low }
+                    }
+                    val vt = if (v != null) " (%.1f V)".format(v) else ""
+                    for ((name, alive) in round) {
+                        val before = netState[name]
+                        netState[name] = alive
+                        if (before != null && before != alive) netEvents.add(0, NetEvent(now, if (alive) "$name answers again$vt" else "$name stopped answering$vt"))
+                    }
+                    if (round.values.none { it }) netEvents.add(0, NetEvent(now, "No module answered at all$vt (adapter link, ignition or network down)"))
+                    delay(400)
+                }
+            } catch (e: Exception) {
+                vm.say("Network watch stopped: " + (e.message ?: "adapter error"))
+            } finally { netRunning = false; vm.livePaused = false }
+        }
+    }
+
+    fun stopNetWatch() { netRunning = false }
+
+    fun shareNetWatch() {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        val sb = StringBuilder()
+        sb.append("Network watch\n")
+        sb.append("Started ${fmt.format(java.util.Date(netStartMs))}, $netRounds rounds\n")
+        sb.append("Battery at the adapter: min ${netMinVolt?.let { "%.1f".format(it) } ?: "?"} V, max ${netMaxVolt?.let { "%.1f".format(it) } ?: "?"} V\n\nModules now:\n")
+        for ((n, a) in netState) sb.append("  ${if (a) "answers" else "SILENT"}  $n\n")
+        sb.append("\nEvents (newest first):\n")
+        if (netEvents.isEmpty()) sb.append("  none: every module answered every round\n")
+        for (e in netEvents) sb.append("  ${fmt.format(java.util.Date(e.atMs))}  ${e.text}\n")
+        val dir = File(vm.appCtx.filesDir, "reports").also { it.mkdirs() }
+        val f = File(dir, "network_watch_" + System.currentTimeMillis() + ".txt")
+        f.writeText(sb.toString())
+        vm.shareFile(f, "text/plain")
+    }
+
     // ------------------------------------------------------------------ driving and idling totals (kept for the life of the app)
     var life = store.loadLife()
     var lifeTick by mutableStateOf(0)

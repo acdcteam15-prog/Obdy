@@ -517,3 +517,48 @@ fun PerfScreen(vm: ObdyVm) {
         }
     }
 }
+
+// ====================================================================================== network watch + computer help
+@Composable
+fun NetWatchScreen(vm: ObdyVm) {
+    val p = vm.pro
+    DisposableEffect(Unit) { onDispose { p.stopNetWatch() } }
+    val tf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+    ScreenFrame("Network watch", { vm.overlay = null }, subtitle = "Which module drops out, and the voltage at that moment") {
+        Panel {
+            Title("Record the moment it goes wrong")
+            Hint("Asks every module you found in the last Deep scan \"are you there?\" about every two seconds, and reads the battery voltage. When a module stops answering, or the voltage falls, it is written down with the time. Leave it running while you try to make the fault happen (select D, steer, start the car), then share the report with your mechanic. It only asks; nothing is changed.")
+            NeedCar(vm)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GradientButton(if (p.netRunning) "Watching..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.netRunning && vm.conn == Conn.On) { p.startNetWatch() }
+                SoftButton("Stop", Modifier.weight(1f), enabled = p.netRunning) { p.stopNetWatch() }
+            }
+            if (p.netRounds > 0) {
+                Label("${p.netRounds} rounds  ·  battery ${p.netVolt?.let { Calc.fmt(it, 1) } ?: "?"} V (lowest ${p.netMinVolt?.let { Calc.fmt(it, 1) } ?: "?"}, highest ${p.netMaxVolt?.let { Calc.fmt(it, 1) } ?: "?"})", size = 13)
+                for ((n, a) in p.netState) Row {
+                    Text(n, color = Brand.TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Pill(if (a) "answers" else "SILENT", if (a) Brand.Green else Brand.Red)
+                }
+            }
+        }
+        if (p.netEvents.isNotEmpty() || p.netRounds > 0) Panel {
+            Title("Events")
+            if (p.netEvents.isEmpty()) Hint("Nothing yet: every module has answered every round.")
+            for (e in p.netEvents.take(40)) Row { Text(tf.format(java.util.Date(e.atMs)) + "  " + e.text, color = Brand.TextPrimary, fontSize = 12.sp) }
+            SoftButton("Share report", Modifier.fillMaxWidth()) { p.shareNetWatch() }
+        }
+        Panel {
+            Title("If the computer itself seems to be the problem")
+            Label("What an app can and cannot do", bold = true, size = 13)
+            Hint("A GM module's software can only be rewritten (\"reflashed\") with GM's programming system (SPS) through a pass-thru adapter and a GM programming subscription, at a dealer or a shop that has it. This app never writes to a module. What it can do is find which module misbehaves, when, and with what voltage, so the shop starts at the right place.")
+            Label("Check these first (cheap, and they cause strange behaviour)", bold = true, size = 13)
+            Label("•  Battery and charging: low or swinging voltage makes modules drop off the network and set steering, brake and gear messages. Test the battery under load and the charging at the battery.", size = 13)
+            Label("•  Grounds and connectors: a loose ground or a corroded connector at the steering, brake or body modules.", size = 13)
+            Label("•  The adapter itself: GM lists a faulty tool cable or a bad contact at the diagnostic socket as a cause of communication codes. If the problem only happens with the adapter plugged in, drive with it unplugged and compare, and try another adapter.", size = 13)
+            Label("•  Do not keep clearing codes: a code in history is a clue. Photograph or share the Deep scan first, then clear.", size = 13)
+            Label("What to bring to the shop", bold = true, size = 13)
+            Hint("The Deep scan report, the Module inventory (part and software numbers), and this network report. Ask them to check for newer software for the power steering, brake and body modules and to read the codes with GM's own tool.")
+            SoftButton("Open the Module inventory", Modifier.fillMaxWidth()) { vm.overlay = "inventory" }
+        }
+    }
+}

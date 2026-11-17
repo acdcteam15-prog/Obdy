@@ -236,6 +236,7 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "atests" -> ActiveTestsScreen(vm)
                     "inventory" -> InventoryScreen(vm)
                     "perf" -> PerfScreen(vm)
+                    "netwatch" -> NetWatchScreen(vm)
                     else -> Box(Modifier.fillMaxSize()) { }
                 }
             } else {
@@ -606,6 +607,7 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
                     Label("Likely causes (most common first):", bold = true, size = 13)
                     for (x in causes) Label("•  $x", size = 13)
                 } else Hint("No built-in notes for this code. Use the AI analysis for this one.")
+                DtcDb.bulletin(f.code)?.let { Label("What GM service information says", bold = true, size = 13); Hint(it) }
                 Manual.noteForCode(f.code)?.let { Label("From your manual", bold = true, size = 13); Hint(it) }
                 FuseCodeChips(vm, f.code)
                 vm.linkFor(f.code)?.let { l -> Label("Possible link: appeared ${l.gapDays} day(s) after \"${l.cause.title}\"", color = Brand.Amber, size = 13) }
@@ -918,6 +920,7 @@ fun ToolsScreen(vm: ObdyVm) {
         "Drives and records" to listOf(
             ToolItem(Ic.Car, "Driving mode", "Big gauges and alerts") { vm.overlay = "drive" },
             ToolItem(Ic.Gauge, "Performance", "0-100, braking, idle time") { vm.overlay = "perf" },
+            ToolItem(Ic.Cpu, "Network watch", "Which module drops out, with voltage") { vm.overlay = "netwatch" },
             ToolItem(Ic.Fuel, "Fuel and trips", "Trips, fill-ups, L/100 km") { vm.overlay = "trips" },
             ToolItem(Ic.Chart, "Recordings", "Graphs, compare drives") { vm.overlay = "records" },
             ToolItem(Ic.Chart, "History", "Codes over time, events, links") { vm.overlay = "timeline" },

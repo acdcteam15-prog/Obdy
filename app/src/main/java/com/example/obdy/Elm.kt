@@ -211,12 +211,32 @@ class ElmClient(private val transport: Transport) {
      */
     suspend fun broadcastFaults(): Map<String, List<Frame>> {
         try {
-            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATSH101"); at("ATSTFF")
-            val r = query("FE03A98112", 5000)
+            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATCF500"); at("ATCM700"); at("ATSH101"); at("ATST96")
+            val r = query("FE03A98112000000", 3000)       // only 5xx frames reach the phone now (before: all bus traffic, which drowned the answers)
             return r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }.groupBy { it.header }
         } finally {
             try { at("ATCAF1"); aimReset(); at("ATST32") } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * One round of "who is still on the network": tester present (3E) to every module in [probes], plus the battery voltage the adapter
+     * reads itself. Any answer from the module's id counts (a refusal proves it is there). Read only, a few frames per module.
+     */
+    suspend fun pingModules(probes: List<ModuleProbe>): Pair<Double?, LinkedHashMap<String, Boolean>> {
+        val out = LinkedHashMap<String, Boolean>()
+        val volt = voltage()
+        try {
+            at("ATST19")
+            for (p in probes) {
+                aim(p)
+                val r = query("3E", 400)
+                out[p.name] = r.frames.any { it.header == p.resp }
+            }
+        } finally {
+            try { aimReset(); at("ATST32") } catch (_: Exception) {}
+        }
+        return volt to out
     }
 
     /** Identity of one module (GM service 1A items: part numbers, programming date, VIN copy). Read only. */
@@ -319,11 +339,28 @@ class ElmClient(private val transport: Transport) {
             at("ATSTFF")      // GM body/chassis modules can need up to a second to answer (the default wait is 0.2 s)
             val tried = ArrayList<String>()
             var done = false
-            // 1) GMLAN A9 81 with a receive filter that lets BOTH the normal id and the 5xx fault-list id through.
+            // 0) GMLAN A9 81 asked by hand. The module answers with a list of RAW frames ("81 code code fault status", ended by
+            //    "81 00 00 00 mask") from a 5xx id. They carry no ISO-TP length byte, so with automatic formatting on the adapter
+            //    threw every one of them away (the log showed NO DATA although the BCM even answered 7F A9 22 to the third try).
             val uudt = Gm.uudtId(m.probe.resp)
             val a = m.probe.resp.toInt(16); val b = uudt.toInt(16)
-            at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv()))
-            for (req in listOf("A98112", "A981FF", "A98108")) {
+            at("ATCAF0"); at("ATCRA"); at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv())); at("ATST96")
+            for (mask in listOf("FF", "12", "08")) {
+                val r = query("03A981${mask}00000000", 2500)
+                val rows = r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }
+                if (rows.isNotEmpty()) {
+                    val list = DtcDecode.fromGmlanRows(rows)
+                    for (d in list) faults.add(Fault(d.code, name, d.kind, d.status, d.raw))
+                    notes.add("$name: ${list.size} code(s) (GM A9 81 $mask from ${rows.first().header})")
+                    result = ModuleResult(name, ids, list.size, "GM A9 81", m); done = true; break
+                }
+                val nrc = r.frames.firstOrNull { it.header == m.probe.resp && it.data.size >= 4 && it.u(1) == 0x7F && it.u(2) == 0xA9 }
+                tried.add("raw A981$mask -> " + (if (r.frames.isEmpty()) "no answer" else if (nrc != null) "refused (NRC %02X)".format(nrc.u(3)) else r.frames.take(2).joinToString(" | ") { "${it.header} ${it.hex()}" }))
+            }
+            at("ATCAF1"); at("ATSTFF")
+            // 1) The same with automatic formatting (some modules answer with a normal E9 frame).
+            at("ATCRA"); at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv()))
+            if (!done) for (req in listOf("A98112")) {
                 val r = query(req, 4000)
                 val rows = r.frames.filter { it.header == uudt && it.u(0) == 0x81 }
                 if (rows.isNotEmpty()) {

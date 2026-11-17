@@ -135,3 +135,10 @@ Unit tests: `app/src/test` (parsing, code decoding, formulas, battery, service i
 - After a recording the app tells you frames per second and warns when the adapter could not pass every frame to the phone. On the busy fast bus (pins 6+14) filter on one to four ids for a complete recording.
 - Signal finder ignores ids with fewer than 6 frames in either recording.
 - Data sweep is several times faster (each request now says "one answer expected", so the adapter no longer waits out its 200 ms timeout).
+
+### 1.14.2 (steering code not shown, network drop-outs)
+- Fault lists of the brake, steering, body and other modules are now asked with automatic formatting OFF. The module's answer is a list of raw frames without a length byte, which the adapter's automatic formatting threw away (log: "no answer" from every module, even though the BCM answered 7F A9 22 to the third try). An empty list is now shown as "0 codes" instead of "no fault list".
+- The "ask everyone" question lets only 5xx frames through, so the answers are no longer drowned by normal bus traffic.
+- Network watch (Tools > Drives and records): asks every module you found whether it is still there about every two seconds, reads the battery voltage, and writes down when a module drops out or the voltage falls. Share the report with your mechanic.
+- Faults screen: "What GM service information says" for C047A, C0710, C0544/U0415, C056D/C056E/C0569 and the U0074/U0077 network codes.
+

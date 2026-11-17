@@ -230,6 +230,63 @@ class BusTest {
         assertTrue(data.all { it.startsWith("22") })
     }
 
+    @Test fun gmlanFaultListIsReadFromRawFramesWithFormattingOff() = runBlocking {
+        var formatting = true
+        val tr = FakeTransport { raw ->
+            val c = raw.trim().uppercase().replace(" ", "")
+            when {
+                c == "ATCAF0" -> { formatting = false; "OK" }
+                c == "ATCAF1" -> { formatting = true; "OK" }
+                c.startsWith("AT") || c.startsWith("ST") -> "OK"
+                // the module answers only when asked by hand; its list is raw frames from 541 with no length byte
+                c == "03A981FF00000000" && !formatting -> "541 81 44 7A 00 09\r541 81 00 00 00 FF"
+                else -> "NO DATA"
+            }
+        }
+        val c = ElmClient(tr)
+        val m = FoundModule(ModuleProbe("Steering test", "241", "641", false), "x")
+        val scan = c.exclusive { readModuleFaults(m) }
+        assertEquals(1, scan.faults.size)
+        assertTrue(scan.faults[0].code.startsWith("C047A"))
+        assertEquals("active", scan.faults[0].kind)
+        assertEquals(1, scan.result.codes)
+        assertTrue(tr.sent.none { it.uppercase().startsWith("A9") && it.length < 8 })          // never the old formatted request when the raw one worked
+    }
+
+    @Test fun gmlanEmptyListIsZeroCodesNotSilence() = runBlocking {
+        var formatting = true
+        val tr = FakeTransport { raw ->
+            val c = raw.trim().uppercase().replace(" ", "")
+            when {
+                c == "ATCAF0" -> { formatting = false; "OK" }
+                c == "ATCAF1" -> { formatting = true; "OK" }
+                c.startsWith("AT") || c.startsWith("ST") -> "OK"
+                c == "03A981FF00000000" && !formatting -> "541 81 00 00 00 FF"
+                else -> "NO DATA"
+            }
+        }
+        val scan = ElmClient(tr).exclusive { readModuleFaults(FoundModule(ModuleProbe("Body", "241", "641", false), "x")) }
+        assertEquals(0, scan.faults.size)
+        assertEquals(0, scan.result.codes)
+    }
+
+    @Test fun pingReportsWhoAnswers() = runBlocking {
+        val alive = ModuleProbe("A", "241", "641", false); val dead = ModuleProbe("B", "243", "643", false)
+        var cur = ""
+        val tr2 = FakeTransport { raw ->
+            val c = raw.trim().uppercase().replace(" ", "")
+            if (c.startsWith("ATSH")) cur = c.removePrefix("ATSH")
+            when {
+                c == "ATRV" -> "12.6V"
+                c == "3E" -> if (cur == "241") "641 01 7E" else "NO DATA"
+                else -> "OK"
+            }
+        }
+        val (v, res) = ElmClient(tr2).exclusive { pingModules(listOf(alive, dead)) }
+        assertEquals(12.6, v!!, 0.01)
+        assertEquals(true, res["A"]); assertEquals(false, res["B"])
+    }
+
     @Test fun sweepStopsOnSilence() = runBlocking {
         val tr = stn { c -> if (c.startsWith("22")) "NO DATA" else null }
         val c = ElmClient(tr)

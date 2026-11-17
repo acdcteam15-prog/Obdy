@@ -487,6 +487,24 @@ object DtcDb {
 
     fun known(code: String): Boolean = names.containsKey(code.take(5).uppercase())
 
+    /**
+     * What published GM service information says about steering / network codes, in plain words. Only things that bulletins state;
+     * nothing here is a diagnosis. [code] may carry a failure-type suffix (C0710-71).
+     */
+    fun bulletin(codeIn: String): String? {
+        val code = codeIn.take(5).uppercase()
+        return when (code) {
+            "C047A" -> "GM bulletin for the 2013 Malibu: \"Service Power Steering\" with C047A comes from a communication hiccup between the power steering module and the brake module (EBCM). Steering assist is not lost. If the code is only in HISTORY, GM says make no repair: replacing parts or reflashing the EBCM does not help. If it is CURRENT, the full diagnostic procedure is needed."
+            "C0710" -> "GM bulletins (2010-2013 models including the 2013 Malibu): C0710 with failure type 71 shows with \"Service Stability / Traction\" (brake module) or \"Service Steering\" (steering module). It goes with the steering angle sensor learn. GM also notes that communication codes which will not clear can come from a faulty tool cable or a bad contact at the diagnostic socket, so test with a different adapter."
+            "C0544", "U0415" -> "On other GM cars (for example the 2014 CTS) C0544 and/or U0415 in the power steering module were cured by reprogramming that module with GM's programming system (SPS). Only a shop with GM programming access can do it; an OBD app cannot and should not."
+            "C056E", "C0569" -> "GM: these set when the steering gear or its module was replaced without being programmed (calibration not programmed), or after a wrong programming. The fix is the GM programming (SPS) and the steering end-stop learn."
+            "C056D" -> "GM: C056D failure type 00 is an internal hardware fault of the steering angle sensor. Diagnose it first before anything else on the steering."
+            "U0074", "U0077" -> "Chassis network is down or has dropped (the brake, steering and body modules share it). Typical order: battery and charging voltage first, then the grounds and connectors of those modules, then a module. GM also lists a poor contact at the diagnostic socket / a faulty tool cable among causes of communication codes that will not clear."
+            "U0126", "U0125", "U0293", "U180D", "C0186", "C0196" -> "Communication / steering angle sensor code. GM notes these can stay set because of a faulty tool cable or a bad contact at the diagnostic socket after the chassis network was checked; try another adapter and do the steering angle sensor learn."
+            else -> null
+        }
+    }
+
     /** Description of a code; falls back to what the code number itself tells (system and group). */
     fun describe(codeIn: String): String {
         val code = codeIn.take(5).uppercase()
