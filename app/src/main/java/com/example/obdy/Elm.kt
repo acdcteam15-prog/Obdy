@@ -206,15 +206,15 @@ class ElmClient(private val transport: Transport) {
      * Reads a list of read-only requests (22 xxxx / 1A xx) from one module. Returns request -> payload (bytes after the
      * echo), or null payload when refused / silent. Used by the module explorer and the odometer finder.
      */
-    suspend fun readModuleData(m: FoundModule, requests: List<String>, onProgress: (String) -> Unit = {}): List<Pair<String, IntArray?>> {
+    suspend fun readModuleData(m: FoundModule, requests: List<String>, st: String = "ATST64", waitMs: Long = 1200, onProgress: (String) -> Unit = {}): List<Pair<String, IntArray?>> {
         val out = ArrayList<Pair<String, IntArray?>>()
         try {
-            aim(m.probe); at("ATST64")
+            aim(m.probe); at(st)
             for ((i, req) in requests.withIndex()) {
                 onProgress("${m.name}: ${i + 1}/${requests.size}")
                 val svc = req.substring(0, 2).toInt(16)
                 val echo = if (svc == 0x22) 3 else 2
-                val r = query(req, 1200)
+                val r = query(req, waitMs)
                 val f = r.frames.firstOrNull { it.header == m.probe.resp && it.u(0) == svc + 0x40 }
                 out.add(req to f?.let { fr -> IntArray(maxOf(0, fr.data.size - echo)) { fr.u(it + echo) } })
             }

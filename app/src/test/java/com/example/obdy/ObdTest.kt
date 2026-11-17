@@ -521,4 +521,11 @@ class InsightsTest {
         val c = OdoFinder.candidates("IPC", "244", "644", "22000D", intArrayOf(0x00, 0x2C, 0x48, 0x10), 290200)
         assertTrue(c.isNotEmpty())
     }
+    @Test fun gearFinderListsOnlyChangingValues() {
+        val snaps = mapOf(
+            "Park" to listOf("221901" to intArrayOf(0), "221902" to intArrayOf(5), "221903" to null),
+            "Drive" to listOf("221901" to intArrayOf(3), "221902" to intArrayOf(5), "221903" to intArrayOf(1)))
+        val c = GearFinder.changes(snaps)
+        assertEquals(1, c.size); assertEquals("221901", c[0].request)
+    }
 }

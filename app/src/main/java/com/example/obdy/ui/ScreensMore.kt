@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -240,12 +242,7 @@ fun SettingsScreen(vm: ObdyVm) {
         SmartSettingsPanels(vm)
         ExtraSettingsPanels(vm)
         ProvidersPanel(vm)
-        Panel {
-            Title("Help me find problems")
-            Hint("If something does not work, share the full conversation with the adapter. It shows exactly what the car answered.")
-            SoftButton("Share the log", Modifier.fillMaxWidth()) { vm.shareText(AppLog.dump().ifBlank { "(log is empty)" }) }
-            SoftButton("Copy the log", Modifier.fillMaxWidth()) { copyText(ctx, AppLog.dump()); vm.say("Copied") }
-        }
+        FullLogPanel(vm)
     }
 }
 
@@ -549,14 +546,7 @@ fun ConsoleScreen(vm: ObdyVm) {
             }
             SoftButton("Clear") { vm.consoleOut.clear() }
         }
-        Panel {
-            Title("Full log")
-            Hint("Everything the app sent and received since it started. Share this when something does not work.")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftButton("Share", Modifier.weight(1f)) { vm.shareText(AppLog.dump().ifBlank { "(empty)" }) }
-                SoftButton("Copy", Modifier.weight(1f)) { copyText(ctx, AppLog.dump()); vm.say("Copied") }
-            }
-        }
+        FullLogPanel(vm)
     }
 }
 
@@ -619,4 +609,28 @@ fun AiScreen(vm: ObdyVm) {
             for (h in vm.aiHistory.take(6)) SoftButton("${fmtDate(h.timeMs)}  ·  ${h.title}", Modifier.fillMaxWidth()) { vm.aiText = h.text }
         }
     }
+}
+
+
+/** Complete log on disk: every request, answer, scan result and live value since the first start, until deleted. */
+@Composable
+fun FullLogPanel(vm: ObdyVm) {
+    var ask by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { vm.refreshFullLog() }
+    Panel {
+        Title("Full log")
+        Hint("Everything Obdy does is saved here: what you pressed, every request sent to the adapter and every answer, scan results and live values every 5 seconds. It stays after you close the app. Share the file with me, then delete it to start clean.")
+        val kb = vm.fullLogSize / 1024
+        Label(if (kb < 1024) "$kb KB saved" else "${"%.1f".format(kb / 1024.0)} MB saved", bold = true, size = 13)
+        SoftButton("Share the full log file", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { vm.shareFullLog() }
+        SoftButton("Refresh size", Modifier.fillMaxWidth()) { vm.refreshFullLog() }
+        SoftButton("Delete the log", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { ask = true }
+    }
+    if (ask) AlertDialog(
+        onDismissRequest = { ask = false },
+        title = { Text("Delete the full log?") },
+        text = { Text("This removes everything saved so far (${vm.fullLogSize / 1024} KB). Share it first if you still need it.") },
+        confirmButton = { TextButton(onClick = { ask = false; vm.deleteFullLog() }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { ask = false }) { Text("Keep it") } }
+    )
 }

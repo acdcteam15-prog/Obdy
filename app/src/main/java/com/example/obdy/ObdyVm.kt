@@ -45,14 +45,20 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     val store = Store(app)
 
     // ------------------------------------------------------------------ look, navigation, messages
-    init { Brand.palette = Palettes.byKey(store.themeKey) }
+    init { AppLog.init(File(ctx.filesDir, "reports")); AppLog.i("[APP] Obdy started"); Brand.palette = Palettes.byKey(store.themeKey) }
     var themeKey by mutableStateOf(store.themeKey)
     fun applyTheme(key: String) { themeKey = key; store.themeKey = key; Brand.palette = Palettes.byKey(key) }
 
-    var tab by mutableStateOf(0)
-    var overlay by mutableStateOf<String?>(null)
+    private var tabState by mutableStateOf(0)
+    var tab: Int
+        get() = tabState
+        set(v) { if (v != tabState) AppLog.i("[YOU] opened tab ${listOf("Home", "Live", "Faults", "Tools", "Car", "Lab").getOrElse(v) { "$v" }}"); tabState = v }
+    private var overlayState by mutableStateOf<String?>(null)
+    var overlay: String?
+        get() = overlayState
+        set(v) { if (v != overlayState) AppLog.i("[YOU] screen: ${v ?: "closed"}"); overlayState = v }
     var toast by mutableStateOf<String?>(null)
-    fun say(t: String) { toast = t }
+    fun say(t: String) { toast = t; AppLog.i("[APP SAYS] $t") }
 
     // ------------------------------------------------------------------ car profile and settings
     var car by mutableStateOf(store.loadCar())
@@ -403,6 +409,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     driveTick()
                     recTick((now - t0) / 1e9)
                     if (flightOn) flightTick(c)
+                    if (now - lastLiveLog >= 5_000_000_000L && rawValues.isNotEmpty()) {
+                        lastLiveLog = now
+                        AppLog.i("[LIVE] " + rawValues.entries.sortedBy { it.key }.joinToString("; ") { (id, v) -> "${Pids.byId(id)?.name ?: "%02X".format(id)}=${Calc.fmt(v, 2)}" } +
+                            extValues.entries.joinToString("") { "; ${it.key}=${Calc.fmt(it.value, 1)}" } + "; odometer=${car.odometerKm} km")
+                    }
                     if (now - lastTrail >= 1_000_000_000L && rawValues.isNotEmpty()) {
                         lastTrail = now
                         if (trail.isEmpty()) trailT0 = now
@@ -429,6 +440,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private val trail = ArrayDeque<LiveSample>()
     private var trailT0 = 0L
     private var lastTrail = 0L
+    private var lastLiveLog = 0L
     private var volt42Bad = false
     private var carSilent = false
 
@@ -601,6 +613,16 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) { say("Could not open the photo.") }
     }
 
+    // ---- complete log file (everything the app sends, receives and does, until deleted)
+    var fullLogSize by mutableStateOf(AppLog.fileSize())
+    fun refreshFullLog() { fullLogSize = AppLog.fileSize() }
+    fun shareFullLog() {
+        val f = AppLog.fileForShare()
+        if (f == null) { say("The log file is empty."); return }
+        shareFile(f, "text/plain")
+    }
+    fun deleteFullLog() { AppLog.clear(); refreshFullLog(); say("Log deleted.") }
+
     fun shareText(text: String) {
         val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
         ctx.startActivity(Intent.createChooser(i, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -724,6 +746,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     /** One row per module from the last deep scan (kept when a quick scan follows). */
     var moduleResults by mutableStateOf<List<ModuleResult>>(emptyList())
     var lastDeepMs by mutableStateOf(0L)
+    /** Set when a deep scan could not reach the other modules (asleep); shown on Faults and Home. */
+    var scanWarning by mutableStateOf<String?>(null)
     /** 0..1 while a scan runs (null = no estimate). */
     var scanFraction by mutableStateOf<Float?>(null)
     var moduleInfo by mutableStateOf<Map<String, ModuleInfo>>(emptyMap())
@@ -764,6 +788,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (scanBusy) return
         if (conn != Conn.On) { say("Connect to the car first."); return }
         scanBusy = true; scanProgress = "Reading the engine computer..."
+        AppLog.i("[YOU] pressed ${if (deep) "Deep scan" else "Quick scan"}", keep = true)
         viewModelScope.launch {
             try {
                 val all = ArrayList<Fault>()
@@ -781,10 +806,21 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 if (deep) {
                     val n = ArrayList<String>(); val mf = ArrayList<Fault>(); val rows = ArrayList<ModuleResult>()
                     scanProgress = "Asking every module to answer..."; scanFraction = 0.05f
-                    foundModules = withCar { findModules { i, t, name -> scanProgress = "Looking for modules ($i/$t): $name"; scanFraction = 0.05f + 0.45f * i / t } } ?: emptyList()
-                    foundCount = foundModules.size
-                    for ((i, m) in foundModules.withIndex()) {
-                        scanProgress = "Reading ${m.name} (${i + 1}/${foundModules.size})..."; scanFraction = 0.5f + 0.42f * i / maxOf(1, foundModules.size)
+                    var fresh = withCar { findModules { i, t, name -> scanProgress = "Looking for modules ($i/$t): $name"; scanFraction = 0.05f + 0.45f * i / t } } ?: emptyList()
+                    if (fresh.isEmpty()) {
+                        // Bus traffic can wake sleeping modules: wait a moment and ask once more before giving up.
+                        scanProgress = "Modules look asleep, trying once more..."
+                        delay(3000)
+                        fresh = withCar { findModules { i, t, name -> scanProgress = "Second try ($i/$t): $name"; scanFraction = 0.05f + 0.45f * i / t } } ?: emptyList()
+                    }
+                    // Nobody answered: the car's modules sleep a short time after the ignition is switched off (the engine computer
+                    // still answers OBD requests, which makes the car look "fine"). Keep what an earlier deep scan found.
+                    val asleep = fresh.isEmpty()
+                    scanWarning = if (asleep) "No module answered except the engine computer. The ABS, body, steering and other modules go to sleep soon after the ignition is switched off, so their codes (for example the power steering fault) could not be read. Turn the ignition ON (or start the engine), wait 5 seconds, then run the Deep scan again." else null
+                    if (!asleep) { foundModules = fresh; foundCount = fresh.size }
+                    val toRead = if (asleep) emptyList() else foundModules
+                    for ((i, m) in toRead.withIndex()) {
+                        scanProgress = "Reading ${m.name} (${i + 1}/${toRead.size})..."; scanFraction = 0.5f + 0.42f * i / maxOf(1, toRead.size)
                         // Engine and transmission: Mode 03/07/0A above, plus GM's own list (it can hold codes Mode 03 does not show).
                         val engine = m.probe.resp == "7E8" || m.probe.resp == "7EA"
                         val r = withCar { readModuleFaults(m, gmOnly = engine) } ?: continue
@@ -807,8 +843,14 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         if (owner == null && list.isNotEmpty()) rows.add(ModuleResult(name, id, list.size, "GM broadcast"))
                         if (new.isNotEmpty()) n.add("$name: ${new.size} more code(s) from the all-modules question ($id)")
                     }
-                    n.add(0, "Modules that answered: " + (foundModules.joinToString { "${it.name} [${it.probe.req}/${it.probe.resp}]" }.ifEmpty { "none besides the engine computer" }))
-                    moduleFaults = mf; moduleResults = rows; lastDeepMs = System.currentTimeMillis(); notes = n
+                    if (asleep) {
+                        n.add(0, "DEEP SCAN INCOMPLETE: no module answered except the engine computer (they were asleep: ignition off or just switched off). Codes of the steering, ABS, body and airbag modules were NOT read.")
+                        if (lastDeepMs > 0) n.add("The module list and codes shown come from the earlier deep scan.")
+                        notes = if (lastDeepMs > 0) n + scanNotes.filter { !it.startsWith("DEEP SCAN INCOMPLETE") } else n
+                    } else {
+                        n.add(0, "Modules that answered: " + foundModules.joinToString { "${it.name} [${it.probe.req}/${it.probe.resp}]" })
+                        moduleFaults = mf; moduleResults = rows; lastDeepMs = System.currentTimeMillis(); notes = n
+                    }
                 }
                 all.addAll(moduleFaults)
                 faults = all.distinctBy { it.key }; monitors = mon; freeze = fr; scanNotes = notes
@@ -818,6 +860,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 newCodes = if (prev == null) emptyList() else faults.filter { f -> prev.faults.none { it.code.take(5) == f.code.take(5) && it.module == f.module } }
                 if (autoScanRun && newCodes.isNotEmpty()) Notifier.newCodes(ctx, newCodes.map { "${it.code} ${it.description}" })
                 autoScanRun = false
+                AppLog.i("[SCAN ${if (deep) "DEEP" else "QUICK"} RESULT] light=${if (mon?.milOn == true) "ON" else "off"} voltage=$voltage codes=${faults.size}", keep = true)
+                for (f in faults) AppLog.i("[SCAN] ${f.code} [${f.kind}] ${f.module}: ${DtcDb.describe(f.code)}", keep = true)
+                for (n in notes) AppLog.i("[SCAN NOTE] $n", keep = true)
                 store.addScan(ScanRecord(lastScanMs, car.odometerKm, mon?.milOn, faults, voltage, notes.joinToString(" | ")))
                 scanHistory = store.loadScans()
                 say(if (faults.isEmpty()) "No fault codes found." else "${faults.size} fault code(s) found.")
@@ -1032,6 +1077,25 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var gearShifts by mutableStateOf<List<ShiftEvent>>(emptyList())
     var gearEngage by mutableStateOf<List<Engagement>>(emptyList())
     var gearExtra by mutableStateOf<String?>(null)
+
+    // ---- "Find the real gear value": snapshots of the gearbox computer's GM answers in each lever position (read only)
+    var gearSnaps by mutableStateOf<Map<String, List<Pair<String, IntArray?>>>>(emptyMap())
+    var gearSnapBusy by mutableStateOf<String?>(null)
+    var gearSnapMsg by mutableStateOf("")
+    val gearChanges: List<GearFinder.Change> get() = GearFinder.changes(gearSnaps)
+    fun gearSnapshot(position: String) {
+        if (gearSnapBusy != null || conn != Conn.On) { if (conn != Conn.On) say("Connect to the car first."); return }
+        val tcm = Gm.probes().firstOrNull { it.resp == "7EA" } ?: return
+        gearSnapBusy = position; gearSnapMsg = "Asking the gearbox computer..."
+        viewModelScope.launch {
+            try {
+                val rows = withCar { readModuleData(FoundModule(tcm, "", tcm.name), GearFinder.requests, "ATST19", 400) { p -> gearSnapMsg = p } } ?: return@launch
+                gearSnaps = gearSnaps + (position to rows)
+                say("$position: ${GearFinder.answered(rows)} of ${rows.size} gearbox values answered")
+            } finally { gearSnapBusy = null; gearSnapMsg = "" }
+        }
+    }
+    fun gearSnapClear() { gearSnaps = emptyMap() }
     private var gearJob: Job? = null
 
     /** Records engine speed and vehicle speed as fast as the adapter allows. [engage] = parked test (25 s), otherwise a drive (up to 4 minutes, until Stop). */
@@ -1143,6 +1207,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 "${r.name} [${r.ids}] codes=${r.codes ?: "no list"}" + (info?.items?.joinToString("") { "\n  ${it.first}: ${it.second}" } ?: " (identity not read)")
             }.ifBlank { "(no deep scan yet)" },
             "ENGINE SELF-TESTS (Mode 06), decoded by the app" to Dossier.testsText(tests),
+            "GEARBOX LEVER-POSITION SNAPSHOTS (GM Mode 22 1900-19FF on 7E2, read only)" to (if (gearSnaps.isEmpty()) "(not done)" else gearSnaps.entries.joinToString("\n") { (k, v) -> "$k: ${GearFinder.answered(v)} answered" } + "\n" + gearChanges.joinToString("\n") { it.line() }),
             "DISCOVERY PROBE (read-only)" to labProbe.joinToString("\n"),
             "GEARBOX RECORDING (rpm and speed, shifts and engagement found by the app)" to (if (gearSamples.isEmpty()) "" else gearReportText()),
             "LOG: kept conversations (scans, self-tests, probes)" to AppLog.dumpKept().ifBlank { "(empty)" },

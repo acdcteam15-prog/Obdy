@@ -90,9 +90,7 @@ fun DriveScreen(vm: ObdyVm) {
                 DriveGauge("volts", vv, 10.0, 16.0, 1, if (vv != null && vv < 12.6) Brand.Red else if (vv != null && vv < 13.2) Brand.Amber else Brand.Green, Modifier.weight(1f))
             }
             val tft = vm.extValues["Transmission fluid temp (GM)"]
-            val gear = vm.extValues["Current gear (GM)"]
-            if (tft != null || gear != null) Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                BigStat("Gear", gear?.let { if (it == 0.0) "N/P" else it.toInt().toString() } ?: "--", Brand.Accent, Modifier.weight(1f))
+            if (tft != null) Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 BigStat("Gearbox °C", tft?.let { Calc.fmt(it, 0) } ?: "--", if ((tft ?: 0.0) >= 110) Brand.Red else Brand.Green, Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {

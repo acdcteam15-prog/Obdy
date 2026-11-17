@@ -425,6 +425,13 @@ fun FaultsScreen(vm: ObdyVm) {
         Text("Scan options are in Settings ›", color = Brand.Accent, fontSize = 12.sp, modifier = Modifier.clickable { vm.overlay = "settings" })
         Hint("Quick: engine and transmission (a few seconds). Deep: also brakes, airbag, body, steering and every other module that answers (about 30 seconds).")
         if (!on) Panel { Label("Not connected."); SoftButton("Connect to the car") { vm.overlay = "connect" } }
+        vm.scanWarning?.let { w -> if (!vm.scanBusy) Panel {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppIcon(Ic.Warning, size = 22.dp, color = Brand.Amber); Title("Deep scan could not reach the other modules")
+            }
+            Hint(w)
+            if (on) GradientButton("Deep scan again", Brand.AltBrush, enabled = !vm.scanBusy) { vm.scan(true) }
+        } }
         if (vm.scanBusy) Panel {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatusDot(Brand.Accent, pulsing = true); Title("Scanning...")
@@ -815,13 +822,11 @@ private fun HealthDashboard(vm: ObdyVm) {
 @Composable
 private fun GearboxLiveCard(vm: ObdyVm) {
     val tft = vm.extValues["Transmission fluid temp (GM)"]
-    val gear = vm.extValues["Current gear (GM)"]
     val oil = vm.extValues["Engine oil life (GM)"]
-    if (tft == null && gear == null && oil == null) { Hint("GM extra values (gearbox temperature, gear, oil life): waiting for the car..."); return }
+    if (tft == null && oil == null) { Hint("GM extra values (gearbox temperature, oil life): waiting for the car..."); return }
     Panel {
         Title("Gearbox and oil (GM values)")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BigStat("Gear", gear?.let { if (it == 0.0) "N/P" else it.toInt().toString() } ?: "--", Brand.Accent, Modifier.weight(1f))
             BigStat("Fluid", tft?.let { Calc.fmt(it, 0) + " °C" } ?: "--", tft?.let { if (it >= 115) Brand.Red else if (it >= 100) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
             BigStat("Oil life", oil?.let { Calc.fmt(it, 0) + " %" } ?: "--", oil?.let { if (it < 15) Brand.Red else if (it < 30) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
         }
