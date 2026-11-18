@@ -377,6 +377,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                                     liveValues[0x05] = g.shown                 // keep the last believable value, so no alert is built on the dropout
                                     if (g.first) {
                                         ectNote = "The engine computer reported coolant ${Calc.fmt(g.raw, 0)} °C right after ${Calc.fmt(g.shown, 0)} °C. A real engine cannot cool that fast, so this is a signal dropout (coolant sensor, its connector or wiring), not a temperature. Obdy ignores it."
+                                        say("Coolant signal dropped out: the computer sent ${Calc.fmt(g.raw, 0)} °C. The dash may show a cold reading; Obdy hides it here.")
                                         AppLog.i("[APP] SUSPECT coolant signal: ${Calc.fmt(g.shown, 0)} -> ${Calc.fmt(g.raw, 0)} °C within seconds (dropout #${ectGuard.suspectCount}); last good value kept", true)
                                     }
                                 }
@@ -399,8 +400,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                             if (m != null && m.size == chunk.size) {
                                 for (p in chunk) m[p.id]?.let { accept(p, it) }
                             } else {
-                                if (chunk.size > 1) { fastFails++; if (fastFails >= 3) { fastBroken = true; say("This adapter does not support fast mode. Reading one value at a time.") } }
+                                val before = answered
                                 for (p in chunk) single(p)
+                                // Only blame the fast mode when single reads work right after; a silent bus (NO DATA everywhere) is not the adapter's fault.
+                                if (chunk.size > 1 && answered > before) { fastFails++; if (fastFails >= 3) { fastBroken = true; say("This adapter does not support fast mode. Reading one value at a time.") } }
                             }
                         }
                     } else for (p in pids) single(p)
@@ -413,7 +416,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (0x42 in ids && (volt42Bad || (dead[0x42] ?: 0) >= 3) && cycle % 4 == 0) {
                         c.exclusive { voltage() }?.let { liveValues[0x42] = it }
                     }
-                    if (showExt && cycle % 4 == 0) {
+                    if (showExt && cycle % 16 == 0) {      // the gearbox value is a request to the TCM: ask rarely, not every second
                         for (e in Gm.extPids) {
                             if ((dead[-e.name.hashCode()] ?: 0) >= 3 && cycle % 32 != 0) continue
                             val v = c.exclusive { readExt(e) }
@@ -801,6 +804,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     /** Re-reads the codes of one module only. */
     fun rescanModule(m: FoundModule) {
         if (scanBusy || conn != Conn.On) return
+        if (blockedWhileMoving("Reading a module")) return
         scanBusy = true; scanProgress = "Reading ${m.name}..."
         viewModelScope.launch {
             try {
@@ -820,9 +824,20 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
      * engine and transmission and keeps the other modules' codes from the last deep scan (they used to be wiped, which also
      * emptied the "module scan notes" in the AI bundle).
      */
+    /** True while the car moves. Anything that talks to other modules (deep scan, module search, broadcasts) is refused then:
+     *  in the 2026-11-18 drive the gearbox went to M, the dash coolant dropped and the fan ran at maximum within a minute of a deep scan. */
+    fun movingNow(): Boolean = (liveValues[0x0D] ?: 0.0) > 3.0
+    fun blockedWhileMoving(what: String): Boolean {
+        if (!movingNow()) return false
+        AppLog.i("[APP] $what refused: the car is moving (${Calc.fmt(liveValues[0x0D] ?: 0.0, 0)} km/h)", true)
+        say("$what only works while the car is stopped (in P, engine running). It talks to every module and can upset the gearbox, dash and fan while driving.")
+        return true
+    }
+
     fun scan(deep: Boolean) {
         if (scanBusy) return
         if (conn != Conn.On) { say("Connect to the car first."); return }
+        if (deep && blockedWhileMoving("The deep scan")) return
         scanBusy = true; scanProgress = "Reading the engine computer..."
         AppLog.i("[YOU] pressed ${if (deep) "Deep scan" else "Quick scan"}", keep = true)
         viewModelScope.launch {
@@ -855,7 +870,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     scanWarning = if (asleep) "No module answered except the engine computer. The ABS, body, steering and other modules go to sleep soon after the ignition is switched off, so their codes (for example the power steering fault) could not be read. Turn the ignition ON (or start the engine), wait 5 seconds, then run the Deep scan again." else null
                     if (!asleep) { foundModules = fresh; foundCount = fresh.size }
                     val toRead = if (asleep) emptyList() else foundModules
+                    var movedAway = false
                     for ((i, m) in toRead.withIndex()) {
+                        if (movingNow()) { movedAway = true; break }
                         scanProgress = "Reading ${m.name} (${i + 1}/${toRead.size})..."; scanFraction = 0.5f + 0.42f * i / maxOf(1, toRead.size)
                         // Engine and transmission: Mode 03/07/0A above, plus GM's own list (it can hold codes Mode 03 does not show).
                         val engine = m.probe.resp == "7E8" || m.probe.resp == "7EA"
@@ -869,7 +886,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     }
                     // Last net: ask everyone at once for codes; anything from a module we did not read is added under its id.
                     scanProgress = "Final check: any module with a code..."; scanFraction = 0.95f
-                    val bc = withCar { broadcastFaults() } ?: emptyMap()
+                    if (!movedAway && movingNow()) movedAway = true
+                    if (movedAway) n.add(0, "DEEP SCAN STOPPED: the car started moving. Module reading was cut short for safety; run it again when stopped.")
+                    val bc = if (movedAway) emptyMap() else withCar { broadcastFaults() } ?: emptyMap()
                     for ((id, frames) in bc) {
                         val owner = foundModules.firstOrNull { Gm.uudtId(it.probe.resp) == id }
                         val name = owner?.name ?: "Module (codes from $id)"

@@ -47,6 +47,7 @@ class ElmClient(private val transport: Transport) {
         if (r.isNotEmpty() && !r.contains('>')) {
             AppLog.i("!! $cmd: no prompt after $ms ms, partial reply discarded", true)
             incompleteReplies++
+            try { transport.write(""); transport.readUntilPrompt(700) } catch (_: Exception) {}      // a bare carriage return stops any output the adapter is still sending
             transport.drain()
             return ""
         }
@@ -211,7 +212,9 @@ class ElmClient(private val transport: Transport) {
     suspend fun broadcastIdentify(): Map<String, Int?> {
         val out = LinkedHashMap<String, Int?>()
         try {
-            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATSH101"); at("ATSTFF")
+            // The answers come from 6xx/7xx ids: filter for them, otherwise the adapter dumps ALL bus traffic for seconds
+            // (it did on 2026-11-18, and every command after it went unanswered for 40 s).
+            at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATCF600"); at("ATCM600"); at("ATSH101"); at("ATST96")
             val r = query("FE021AB0", 3000)
             for (f in r.frames) {
                 if (!f.header.startsWith("6") && !f.header.startsWith("7")) continue

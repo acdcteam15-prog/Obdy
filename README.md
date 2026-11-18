@@ -57,6 +57,16 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: automatic check and background download (Wi-Fi only by default), kept on the phone until you press Install; a red dot on the gear and a banner on Home show when one is ready. Settings (gear, top-right of every main screen) now holds all settings in one place.
 
+## 1.14.8
+
+From the 18 Nov afternoon drive (gearbox stuck in M, dash coolant dropped, AC off, fan at maximum, all within a minute of a deep scan):
+
+- The deep scan, reading one module and anything else that talks to every module is refused while the car is moving, and a running deep scan stops itself if the car starts moving.
+- The "who are you" broadcast now filters the answers; before, the adapter dumped all bus traffic for seconds and every command after it went unanswered for 40 s (which also made the app wrongly report "no fast mode" and "modules asleep").
+- A reply cut off without the adapter prompt now also sends a carriage return so the adapter stops talking.
+- The gearbox-temperature request to the TCM is asked every 16th cycle instead of every 4th.
+- A coolant dropout now shows a message on screen at once (the dash may show a cold value while Obdy hides it).
+
 ## 1.14.7
 
 - Removed the "oil life" value. The GM value it read (22115E) is a fast counter, not oil life (it jumped 1-100% every few seconds). Read oil life on the dash.
