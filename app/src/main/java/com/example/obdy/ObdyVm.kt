@@ -246,6 +246,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 }
                 store.lastKind = kind; store.lastAddress = address
                 conn = Conn.On
+                KeepAlive.start(appCtx)
                 chargeWarned = false; lowChargeSec = 0.0
                 try { syncOdometer() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
                 if (store.autoScan) { autoScanRun = true; scan(false) }
@@ -282,6 +283,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         try { client?.close() } catch (_: Exception) {}
         client = null
         if (conn != Conn.Off) { conn = Conn.Off; connStatus = "Not connected" }
+        KeepAlive.stop(appCtx)
         adapter = null
         stopRecordingInternal(save = true)
         tripAcc?.let { finishTrip() }

@@ -57,6 +57,11 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: automatic check and background download (Wi-Fi only by default), kept on the phone until you press Install; a red dot on the gear and a banner on Home show when one is ready. Settings (gear, top-right of every main screen) now holds all settings in one place.
 
+## 1.14.6
+
+- The deep scan no longer reports every supported code as a fault (a healthy car showed 257). GM modules list all codes they support; status 01 means supported and fine. Only entries with other status bits (for example 25 = P0128) are shown, with the status explained in words.
+- New background keep-alive: while connected, Obdy runs as a foreground service with a quiet notification and a wake lock, so recording, trips and logging continue with the screen off or another app in front. Earlier a locked phone froze the app for up to 15 minutes. Nothing is written outside the app's own storage.
+
 ## Pro tools (version 1.14, Tools > Adapter and advanced)
 Built for adapters with the STN command set (vLinker MC+, OBDLink). All of them pause the live data while they work and put the adapter back on the fast bus.
 - **Fault state filter** (Faults): every code shows **Active now / Pending / History** (from the module's own status byte); filter chips on top.

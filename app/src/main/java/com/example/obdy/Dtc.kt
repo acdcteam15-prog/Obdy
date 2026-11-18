@@ -51,17 +51,34 @@ object DtcDecode {
 
     /**
      * GMLAN A9 81 answer: one CAN frame per code from the 5xx id, "81 DTC-hi DTC-lo FTB status". DTC 00 00 ends the list.
-     * Status bit 0 = failing now. Best effort: the failure-type byte is shown as a suffix (C0545-5A style).
+     * With mask FF the module lists EVERY code it supports, not only failing ones. Status 01 alone (bit 0) is what a healthy
+     * supported code shows (confirmed on the 2013 Malibu: 137 of 158 ECM entries, light off). A real stored code carries more
+     * bits: P0128 shows 25 (bits 0, 2, 5) and was also reported by the standard scan. So an entry counts only when any bit
+     * other than bit 0 is set. Bits: 0x80 warning lamp, 0x20 failed since clear, 0x10 not completed since clear,
+     * 0x08 confirmed, 0x04 pending / present at last check.
      */
+    fun gmlanStatusFlagged(st: Int) = (st and 0xFE) != 0
+
+    fun gmlanStatusText(st: Int): String {
+        val p = ArrayList<String>()
+        if (st and 0x80 != 0) p.add("lamp requested")
+        if (st and 0x08 != 0) p.add("confirmed")
+        if (st and 0x04 != 0) p.add("pending or present at last check")
+        if (st and 0x20 != 0) p.add("failed since last clear")
+        if (st and 0x10 != 0) p.add("test not completed since clear")
+        return if (p.isEmpty()) "supported, no fault" else p.joinToString(", ")
+    }
+
     fun fromGmlanRows(rows: List<Frame>): List<GmDtc> {
         val out = ArrayList<GmDtc>()
         for (f in rows) {
             if (f.data.size < 4 || f.u(0) != 0x81) continue
-            val hi = f.u(1); val lo = f.u(2); val ftb = f.u(3); val st = f.u(4)
+            val hi = f.u(1); val lo = f.u(2); val ftb = f.u(3); val st = if (f.data.size > 4) f.u(4) else 0
             if (hi == 0 && lo == 0) break
+            if (!gmlanStatusFlagged(st)) continue
             val code = fromBytes(hi, lo) + (if (ftb != 0) "-%02X".format(ftb) else "")
-            val kind = if ((st and 0x01) != 0) "active" else "history"
-            if (out.none { it.code == code }) out.add(GmDtc(code, kind, "status %02X".format(st), f.hex()))
+            val kind = if ((st and 0x01) != 0 && (st and 0x88) != 0) "active" else "history"
+            if (out.none { it.code == code }) out.add(GmDtc(code, kind, "status %02X: %s".format(st, gmlanStatusText(st)), f.hex()))
         }
         return out
     }

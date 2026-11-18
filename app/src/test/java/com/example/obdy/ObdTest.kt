@@ -510,6 +510,22 @@ class GmlanTest {
     }
 }
 
+class GmlanStatusTest {
+    @Test fun supportedListIsNotACountOfFaults() {
+        // from the real deep scan: 01 = supported and healthy, 25 = P0128 stored, final 81 00 00 00 FF ends the list
+        val r = ObdParse.parse("5E8 81 00 11 00 01\r5E8 81 01 28 00 25\r5E8 81 01 33 00 01\r5E8 81 06 06 00 21\r5E8 81 00 00 00 FF\r\r>")
+        val list = DtcDecode.fromGmlanRows(r.frames.filter { it.header == "5E8" && it.u(0) == 0x81 })
+        assertEquals(2, list.size)
+        assertEquals("P0128", list[0].code)
+        assertTrue(list[0].status.contains("failed since last clear"))
+        assertEquals("history", list[0].kind)
+    }
+    @Test fun healthyOnlyListIsEmpty() {
+        val r = ObdParse.parse("5EA 81 07 41 00 01\r5EA 81 00 00 00 FF\r\r>")
+        assertEquals(0, DtcDecode.fromGmlanRows(r.frames.filter { it.u(0) == 0x81 }).size)
+    }
+}
+
 class InsightsTest {
     @Test fun codeComesBack() {
         val a = Fault("C0545-5A", "Module 242", "active")
