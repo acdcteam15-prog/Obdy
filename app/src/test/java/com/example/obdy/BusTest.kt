@@ -337,3 +337,37 @@ class BusTest {
         assertEquals("ATSP6", tr.sent.last { it.startsWith("ATSP") })
     }
 }
+
+class EctGuardTest {
+    @Test fun dropoutFromTheRealDriveIsSuspectAndRecovers() {
+        val g = EctGuard()
+        var t = 0L
+        val seq = listOf(60.0, 59.0, 23.0, 22.0, 21.0, 19.0, 60.0, 60.0)
+        val out = seq.map { v -> t += 5000; g.feed(t, v) }
+        assertTrue(out[1] is EctGuard.Verdict.Good)
+        assertTrue(out[2] is EctGuard.Verdict.Suspect && (out[2] as EctGuard.Verdict.Suspect).first)
+        assertEquals(59.0, (out[3] as EctGuard.Verdict.Suspect).shown, 0.01)
+        assertTrue(out[6] is EctGuard.Verdict.Recovered)
+        assertTrue(out[7] is EctGuard.Verdict.Good)
+        assertEquals(1, g.suspectCount)
+    }
+    @Test fun slowWarmUpIsNeverSuspect() {
+        val g = EctGuard(); var t = 0L
+        for (v in 20..90 step 2) assertTrue(g.feed(t.also { t += 5000 }, v.toDouble()) is EctGuard.Verdict.Good)
+    }
+    @Test fun afterALongPauseAnyValueIsAccepted() {
+        val g = EctGuard()
+        g.feed(0, 70.0)
+        assertTrue(g.feed(900_000, 30.0) is EctGuard.Verdict.Good)
+    }
+}
+
+class IncompleteReplyTest {
+    @Test fun halfAnAnswerIsDiscarded() = runBlocking {
+        val tr = FakeTransport { "##41 0C 1A" }          // no prompt: adapter had not finished
+        val c = ElmClient(tr)
+        val r = c.exclusive { raw("010C") }
+        assertEquals("", r)
+        assertEquals(1, c.incompleteReplies)
+    }
+}

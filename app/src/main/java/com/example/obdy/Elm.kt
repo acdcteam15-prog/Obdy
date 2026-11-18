@@ -27,6 +27,8 @@ class ElmClient(private val transport: Transport) {
     fun close() = transport.close()
 
     // ---------------------------------------------------------------- low level (call inside exclusive)
+    @Volatile var incompleteReplies = 0
+
     suspend fun raw(cmd: String, timeoutMs: Long = 3000): String {
         val keep = !isPolling(cmd)
         transport.drain()
@@ -41,6 +43,13 @@ class ElmClient(private val transport: Transport) {
         }
         val ms = (System.nanoTime() - t0) / 1_000_000
         AppLog.i("<< " + r.replace('\r', ' ').replace('\n', ' ').trim() + "   [${ms} ms]", keep)
+        // No prompt means the adapter had not finished: half an answer must never be read as a sensor value.
+        if (r.isNotEmpty() && !r.contains('>')) {
+            AppLog.i("!! $cmd: no prompt after $ms ms, partial reply discarded", true)
+            incompleteReplies++
+            transport.drain()
+            return ""
+        }
         return r
     }
 

@@ -433,3 +433,35 @@ object Inventory {
         return a != b
     }
 }
+
+/**
+ * Coolant plausibility. A real engine cannot lose 25 °C in seconds; in the 2026-11-18 drive the ECM itself reported 59 °C,
+ * then 23, 22, 21, 19 and back to 60 within about 20 s while driving. That is a signal dropout (sensor, connector or wiring),
+ * not a temperature, and it must not feed alerts or a diagnosis. The last good value is kept while the dropout lasts.
+ */
+class EctGuard(private val jumpC: Double = 25.0, private val withinMs: Long = 12_000, private val giveUpMs: Long = 90_000) {
+    sealed class Verdict {
+        class Good(val value: Double) : Verdict()
+        class Suspect(val shown: Double, val raw: Double, val first: Boolean) : Verdict()
+        class Recovered(val value: Double, val lastedMs: Long) : Verdict()
+    }
+    private var good: Double? = null
+    private var goodMs = 0L
+    private var badSince = 0L
+    var suspectCount = 0; private set
+
+    fun reset() { good = null; badSince = 0L }
+
+    fun feed(nowMs: Long, v: Double): Verdict {
+        val g = good
+        if (g == null || nowMs - goodMs > withinMs && badSince == 0L) { good = v; goodMs = nowMs; return Verdict.Good(v) }
+        if (badSince == 0L) {
+            if (Math.abs(v - g) >= jumpC && nowMs - goodMs <= withinMs) { badSince = nowMs; suspectCount++; return Verdict.Suspect(g, v, true) }
+            good = v; goodMs = nowMs; return Verdict.Good(v)
+        }
+        // inside a dropout
+        if (Math.abs(v - g) < jumpC) { val d = nowMs - badSince; badSince = 0L; good = v; goodMs = nowMs; return Verdict.Recovered(v, d) }
+        if (nowMs - badSince > giveUpMs) { badSince = 0L; good = v; goodMs = nowMs; return Verdict.Good(v) }   // it stayed there: believe it
+        return Verdict.Suspect(g, v, false)
+    }
+}

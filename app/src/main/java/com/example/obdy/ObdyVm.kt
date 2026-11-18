@@ -370,7 +370,19 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         rawValues[p.id] = v
                         val invalid = (p.id == 0x0D && v >= 255.0) || (p.id == 0x42 && v <= 0.0)
                         if (p.id == 0x42) volt42Bad = invalid
-                        if (invalid) { if (p.id != 0x42) liveValues.remove(p.id) } else liveValues[p.id] = v
+                        if (!invalid && p.id == 0x05) {
+                            when (val g = ectGuard.feed(System.currentTimeMillis(), v)) {
+                                is EctGuard.Verdict.Good -> liveValues[0x05] = g.value
+                                is EctGuard.Verdict.Suspect -> {
+                                    liveValues[0x05] = g.shown                 // keep the last believable value, so no alert is built on the dropout
+                                    if (g.first) {
+                                        ectNote = "The engine computer reported coolant ${Calc.fmt(g.raw, 0)} °C right after ${Calc.fmt(g.shown, 0)} °C. A real engine cannot cool that fast, so this is a signal dropout (coolant sensor, its connector or wiring), not a temperature. Obdy ignores it."
+                                        AppLog.i("[APP] SUSPECT coolant signal: ${Calc.fmt(g.shown, 0)} -> ${Calc.fmt(g.raw, 0)} °C within seconds (dropout #${ectGuard.suspectCount}); last good value kept", true)
+                                    }
+                                }
+                                is EctGuard.Verdict.Recovered -> { liveValues[0x05] = g.value; AppLog.i("[APP] coolant signal back to ${Calc.fmt(g.value, 0)} °C after ${g.lastedMs / 1000} s dropout", true) }
+                            }
+                        } else if (invalid) { if (p.id != 0x42) liveValues.remove(p.id) } else liveValues[p.id] = v
                     }
                     fun missed(id: Int) {
                         val n = (dead[id] ?: 0) + 1; dead[id] = n
@@ -409,7 +421,15 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     val now = System.nanoTime()
-                    val dt = (now - last) / 1e9; last = now
+                    var dt = (now - last) / 1e9; last = now
+                    if (dt > 20.0) {
+                        // The app was frozen (screen locked, background): what is on screen is old, and a trip must not count the gap as driving.
+                        AppLog.i("[APP] live data was paused ${dt.toInt()} s: old values dropped, waiting for fresh readings", true)
+                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear()
+                        ectGuard.reset(); ectNote = null; lowChargeSec = 0.0
+                        say("Live data was paused for ${dt.toInt() / 60} min. Old values were cleared; fresh readings follow.")
+                        dt = 0.0
+                    }
                     tripTick(dt)
                     pro.tick(dt)
                     chargeTick(dt)
@@ -532,6 +552,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
      * for 60 s, once per connection.
      */
     var chargeWarning by mutableStateOf<String?>(null)
+    /** Coolant signal dropout note (shown on Home and in the log). Null when the signal looks sane. */
+    var ectNote by mutableStateOf<String?>(null)
+    private val ectGuard = EctGuard()
     private var lowChargeSec = 0.0
     private var chargeWarned = false
     // per-drive charging log (saved when the trip ends)
@@ -546,11 +569,12 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             if (kmh < 2 && rpm < 1100) { chIdleSum += v; chIdleN++; chIdleMin = minOf(chIdleMin, v) }
             else if (kmh > 20) { chDriveSum += v; chDriveN++ }
         }
-        // Below 12.6 V for 60 s, or below 12.9 V for 3 minutes (GM's voltage control can sit near 12.8 V at idle for a while).
-        if (rpm > 500 && v < 12.9) lowChargeSec += dt * (if (v < 12.6) 3.0 else 1.0) else lowChargeSec = 0.0
-        if (!chargeWarned && lowChargeSec >= 180) {
+        // GM's regulated charging lowers the voltage on purpose (battery full, light load), so one low reading means nothing.
+        // Warn only after the voltage stayed under 12.6 V for 2 minutes with the engine running; it drains back slowly, not instantly.
+        if (rpm > 500 && v < 12.6) lowChargeSec += dt else lowChargeSec = maxOf(0.0, lowChargeSec - dt * 2)
+        if (!chargeWarned && lowChargeSec >= 120) {
             chargeWarned = true
-            chargeWarning = "Engine running but only ${Calc.fmt(v, 1)} V for a while: the battery is not being charged properly. " +
+            chargeWarning = "Engine running but only ${Calc.fmt(v, 1)} V for 2 minutes. GM lowers the voltage on purpose at times, so first switch off the AC, lights and heated seats and see if it rises above 13 V. " +
                 "Low voltage is the most common cause of \"Service Power Steering\" on this Malibu. Run the Battery test (Tools)."
             say("Charging looks low: ${Calc.fmt(v, 1)} V with the engine running")
         }
@@ -738,7 +762,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         val rpm = liveValues[0x0C] ?: 0.0
         val msg = when {
             (liveValues[0x05] ?: 0.0) >= 112 -> "Engine hot: ${Calc.fmt(liveValues[0x05]!!, 0)} °C. Pull over safely, idle, then switch off."
-            rpm > 500 && (liveValues[0x42] ?: 14.0) < 12.6 -> "Not charging: ${Calc.fmt(liveValues[0x42]!!, 1)} V"
+            rpm > 500 && lowChargeSec >= 60 -> "Low charging voltage: ${Calc.fmt(liveValues[0x42] ?: 0.0, 1)} V"
             (extValues["Transmission fluid temp (GM)"] ?: 0.0) >= 115 -> "Gearbox hot: ${Calc.fmt(extValues["Transmission fluid temp (GM)"]!!, 0)} °C. Drive gently."
             rpm >= 6200 -> "Very high rpm"
             else -> null

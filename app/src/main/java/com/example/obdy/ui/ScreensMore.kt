@@ -236,7 +236,7 @@ fun SettingsScreen(vm: ObdyVm) {
             SectionHead(Ic.Chart, "Live data")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.showExt, onCheckedChange = { vm.showExt = it }); Spacer(Modifier.width(8.dp))
-                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature and oil life on the Live screen. Shown only if the module answers.") }
+                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature on the Live screen. (Oil life was removed: that value turned out to be a fast counter, not oil life. Read it on the dash.) Shown only if the module answers.") }
             }
         }
         SmartSettingsPanels(vm)

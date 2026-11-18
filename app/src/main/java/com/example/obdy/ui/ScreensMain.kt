@@ -327,6 +327,16 @@ fun HomeScreen(vm: ObdyVm) {
                 SoftButton("Open the battery test", Modifier.fillMaxWidth()) { vm.overlay = "battery" }
             }
         } }
+        vm.ectNote?.let { w -> Reveal(1) {
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppIcon(Ic.Warning, size = 22.dp, color = Brand.Amber); Title("Coolant signal dropped out")
+                }
+                Hint(w)
+                Hint("This fits the P0128 code: if the computer sometimes sees a cold engine, it thinks the thermostat is stuck open. Check the coolant sensor connector for corrosion or a loose pin before buying a thermostat.")
+                SoftButton("Got it", Modifier.fillMaxWidth()) { vm.ectNote = null }
+            }
+        } }
         if (vm.newCodes.isNotEmpty()) Reveal(1) {
             Panel(Modifier.clickable { vm.tab = 2 }) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -687,11 +697,13 @@ private fun ModulesPanel(vm: ObdyVm) {
             if (withCodes > 0) { Spacer(Modifier.width(6.dp)); Pill("$withCodes with codes", Brand.Red) }
         }
         Hint("Every computer that answered the deep scan${if (vm.lastDeepMs > 0) " (" + fmtDate(vm.lastDeepMs) + ")" else ""}. Tap one for its identity and codes.")
+        val silent = vm.moduleResults.count { it.codes == null }
+        if (silent > 0) Hint("$silent module${if (silent == 1) "" else "s"} answered but gave no fault list: NOT checked, so not proven fault-free. A module that did not answer at all (asleep, or on the second, single-wire bus) was not scanned either; run Tools > Second bus for that one.")
         for (r in vm.moduleResults) {
             val key = r.ids
             val (col, txt) = when {
-                r.codes == null -> Brand.TextSecondary to "no list"
-                r.codes == 0 -> Brand.Green to "clear"
+                r.codes == null -> Brand.Amber to "not checked"
+                r.codes == 0 -> Brand.Green to "no faults flagged"
                 else -> Brand.Red to "${r.codes} code${if (r.codes == 1) "" else "s"}"
             }
             val isOpen = openId == key
@@ -847,13 +859,11 @@ private fun HealthDashboard(vm: ObdyVm) {
 @Composable
 private fun GearboxLiveCard(vm: ObdyVm) {
     val tft = vm.extValues["Transmission fluid temp (GM)"]
-    val oil = vm.extValues["Engine oil life (GM)"]
-    if (tft == null && oil == null) { Hint("GM extra values (gearbox temperature, oil life): waiting for the car..."); return }
+    if (tft == null) { Hint("GM extra value (gearbox temperature): waiting for the car..."); return }
     Panel {
-        Title("Gearbox and oil (GM values)")
+        Title("Gearbox (GM value)")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             BigStat("Fluid", tft?.let { Calc.fmt(it, 0) + " °C" } ?: "--", tft?.let { if (it >= 115) Brand.Red else if (it >= 100) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
-            BigStat("Oil life", oil?.let { Calc.fmt(it, 0) + " %" } ?: "--", oil?.let { if (it < 15) Brand.Red else if (it < 30) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
         }
         Hint("Gearbox fluid: normal 70–95 °C, over 110 °C when working hard is too hot (slow down, avoid kick-down).")
     }

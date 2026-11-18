@@ -57,6 +57,15 @@ phone (Obdy)  <== Bluetooth / Bluetooth LE / Wi-Fi ==>  OBD-II adapter (ELM327 t
 - **Trip routes**: optional GPS track saved as GPX per trip.
 - **Updates from GitHub**: automatic check and background download (Wi-Fi only by default), kept on the phone until you press Install; a red dot on the gear and a banner on Home show when one is ready. Settings (gear, top-right of every main screen) now holds all settings in one place.
 
+## 1.14.7
+
+- Removed the "oil life" value. The GM value it read (22115E) is a fast counter, not oil life (it jumped 1-100% every few seconds). Read oil life on the dash.
+- Coolant dropout guard: a coolant reading that falls 25 degrees or more within seconds is marked as a signal dropout (sensor, connector or wiring), logged, shown on Home, and kept out of alerts. In the 18 Nov drive the ECM itself reported 59, then 23, 22, 21, 19 and 60 again.
+- Bluetooth LE: a failed or unacknowledged write now fails the command instead of being ignored, and a reply without the adapter prompt is discarded instead of read as data.
+- After the app was paused (screen locked or background) for more than 20 s, old live values are dropped and the trip does not count the gap as driving.
+- Charging warning needs 2 minutes under 12.6 V with the engine running (GM lowers the voltage on purpose at times) and tells you to switch off AC and lights first.
+- Modules panel: "not checked" for modules that answered without a fault list, "no faults flagged" instead of "clear", and a note that silent or second-bus modules were not scanned.
+
 ## 1.14.6
 
 - The deep scan no longer reports every supported code as a fault (a healthy car showed 257). GM modules list all codes they support; status 01 means supported and fine. Only entries with other status bits (for example 25 = P0128) are shown, with the status explained in words.

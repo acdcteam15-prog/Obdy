@@ -16,6 +16,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -200,14 +201,18 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
             if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(d, value) else { d.value = value; g.writeDescriptor(d) }
         }
 
-        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) { ready.complete(Unit) }
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) ready.completeExceptionally(IOException("Bluetooth LE notification setup failed (status $status)")) else ready.complete(Unit)
+        }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) { append(value) }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) { append(c.value) }
 
-        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) { writeDone?.complete(Unit) }
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) writeDone?.completeExceptionally(IOException("Bluetooth LE write failed (status $status)")) else writeDone?.complete(Unit)
+        }
     }
 
     override suspend fun open() {
@@ -238,7 +243,10 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
                 ch.writeType = type; ch.value = part; g.writeCharacteristic(ch)
             }
             if (!ok) throw IOException("Bluetooth LE write failed")
-            if (noResp) delay(12) else { try { withTimeout(2000) { done.await() } } catch (_: Exception) {} }
+            if (noResp) delay(12) else {
+                try { withTimeout(2000) { done.await() } }
+                catch (e: TimeoutCancellationException) { throw IOException("Bluetooth LE write was not acknowledged (timeout)") }
+            }
         }
     }
 
