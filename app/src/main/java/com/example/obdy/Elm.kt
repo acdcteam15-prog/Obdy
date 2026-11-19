@@ -374,7 +374,8 @@ class ElmClient(private val transport: Transport) {
                 if (rows.isNotEmpty()) {
                     val list = DtcDecode.fromGmlanRows(rows)
                     for (d in list) faults.add(Fault(d.code, name, d.kind, d.status, d.raw))
-                    notes.add("$name: ${list.size} code(s) (GM A9 81 $mask from ${rows.first().header})")
+                    notes.add("$name: ${list.size} code(s) (GM A9 81 $mask from ${rows.first().header}); ${rows.size - list.size - 1} other test records are not faults")
+                    AppLog.i("[SCAN] $name: ${rows.size} module test records, ${list.size} counted as faults (status 0x10 or 0x08 only)", true)
                     result = ModuleResult(name, ids, list.size, "GM A9 81", m); done = true; break
                 }
                 val nrc = r.frames.firstOrNull { it.header == m.probe.resp && it.data.size >= 4 && it.u(1) == 0x7F && it.u(2) == 0xA9 }

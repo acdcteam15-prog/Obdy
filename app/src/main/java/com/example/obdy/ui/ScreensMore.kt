@@ -225,11 +225,7 @@ fun SettingsScreen(vm: ObdyVm) {
             SectionHead(Ic.Plug, "Connection and screen")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.autoConnect, onCheckedChange = { vm.changeAutoConnect(it) }); Spacer(Modifier.width(8.dp))
-                Column { Label("Connect automatically", bold = true); Hint("Uses the last adapter you connected to. When the app opens, and when the adapter was not ready, it keeps trying by itself until the car answers. The Disconnect button pauses it until you connect or reopen the app.") }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = vm.autoWait, onCheckedChange = { vm.changeAutoWait(it) }); Spacer(Modifier.width(8.dp))
-                Column { Label("Keep waiting for the car in the background", bold = true); Hint("Shows one quiet notification so Android does not stop the app while it waits. Turn off to save battery; then Obdy connects only while the app is open.") }
+                Column { Label("Connect automatically", bold = true); Hint("Uses the last adapter you connected to. It tries only while the app is open (up to 4 times), so it does not drain the battery. Press Connect any time.") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.keepScreenOn, onCheckedChange = { vm.changeKeepScreen(it) }); Spacer(Modifier.width(8.dp))

@@ -148,7 +148,7 @@ private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
 @SuppressLint("MissingPermission")
 @Suppress("DEPRECATION")
-class BleTransport(private val ctx: Context, private val device: BluetoothDevice, private val background: Boolean = false) : Transport {
+class BleTransport(private val ctx: Context, private val device: BluetoothDevice) : Transport {
     override val label: String get() = deviceName(device)
     private val lock = Any()
     private val incoming = StringBuilder()
@@ -220,11 +220,10 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
     }
 
     override suspend fun open() {
-        // background = Android keeps the request open and completes it when the adapter appears (no 15 s limit on the adapter being awake)
-        AppLog.i("[LINK] Bluetooth LE connecting (" + (if (background) "background request, up to 60 s" else "direct") + ") to ${device.address}", true)
-        gatt = device.connectGatt(ctx, background, cb, BluetoothDevice.TRANSPORT_LE)
+        AppLog.i("[LINK] Bluetooth LE connecting (direct) to ${device.address}", true)
+        gatt = device.connectGatt(ctx, false, cb, BluetoothDevice.TRANSPORT_LE)
         try {
-            withTimeout(if (background) 60_000L else 15_000L) { ready.await() }
+            withTimeout(15_000L) { ready.await() }
         } catch (e: Exception) {
             close()
             if (e is IOException) throw e

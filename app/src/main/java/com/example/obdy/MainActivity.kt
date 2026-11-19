@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onPause() { shotHandler.removeCallbacks(shotTick); AppLog.i("[APP] app went to the background"); super.onPause() }
+    override fun onPause() { shotHandler.removeCallbacks(shotTick); vm.appInBackground(); AppLog.i("[APP] app went to the background"); super.onPause() }
     override fun onStop() { AppLog.i("[APP] app not visible"); AppLog.flush(); super.onStop() }
     override fun onDestroy() { AppLog.i("[APP] app closed (or rotated)"); AppLog.flush(); super.onDestroy() }
 
@@ -124,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         AppLog.i("[APP] app in the foreground")
         super.onResume()
         shotHandler.removeCallbacks(shotTick); shotHandler.postDelayed(shotTick, 400)
+        vm.appForeground()
         vm.refreshPermission()
         vm.autoConnectNow()
         vm.refreshUpdateState()

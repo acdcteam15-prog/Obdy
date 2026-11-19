@@ -54,10 +54,18 @@ object DtcDecode {
      * With mask FF the module lists EVERY code it supports, not only failing ones. Status 01 alone (bit 0) is what a healthy
      * supported code shows (confirmed on the 2013 Malibu: 137 of 158 ECM entries, light off). A real stored code carries more
      * bits: P0128 shows 25 (bits 0, 2, 5) and was also reported by the standard scan. So an entry counts only when any bit
-     * other than bit 0 is set. Bits: 0x80 warning lamp, 0x20 failed since clear, 0x10 not completed since clear,
+     * (older rule, replaced below) other than bit 0. Bits: 0x80 warning lamp, 0x20, 0x10,
      * 0x08 confirmed, 0x04 pending / present at last check.
      */
-    fun gmlanStatusFlagged(st: Int) = (st and 0xFE) != 0
+    /**
+     * GM answers "A9 81 FF" with a catalogue of EVERY test the module has (158 in the ECM), each with a status byte. Most are
+     * just "supported" (01) or "test bookkeeping" (21, 24, 25, 05) and their number changes from scan to scan (15, 34, 104 codes
+     * of the same car in one hour; they included P0101, P0121, P0201-P0204, P0335, P0351-P0354: impossible on a car that drives).
+     * The car's own answer to the functional request A9 81 12 listed exactly three codes (P0011 B9, P1876 7F, C056D 95) and
+     * standard Mode 03/07 list only P0011. In every real code seen, bit 0x10 is set; in no catalogue entry is it.
+     * So only 0x10 (current) and 0x08 (confirmed, e.g. P0128 = 29) are treated as faults; the rest are not faults.
+     */
+    fun gmlanStatusFlagged(st: Int) = (st and 0x18) != 0
 
     fun gmlanStatusText(st: Int): String {
         val p = ArrayList<String>()
@@ -77,7 +85,7 @@ object DtcDecode {
             if (hi == 0 && lo == 0) break
             if (!gmlanStatusFlagged(st)) continue
             val code = fromBytes(hi, lo) + (if (ftb != 0) "-%02X".format(ftb) else "")
-            val kind = if ((st and 0x01) != 0 && (st and 0x88) != 0) "active" else "history"
+            val kind = if ((st and 0x10) != 0) "active" else "history"
             if (out.none { it.code == code }) out.add(GmDtc(code, kind, "status %02X: %s".format(st, gmlanStatusText(st)), f.hex()))
         }
         return out

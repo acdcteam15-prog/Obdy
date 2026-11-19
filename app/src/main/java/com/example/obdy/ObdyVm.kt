@@ -157,10 +157,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var autoConnect by mutableStateOf(store.autoConnect)
     fun changeAutoConnect(v: Boolean) {
         autoConnect = v; store.autoConnect = v
-        if (v) { autoHold = false; autoConnectNow() } else { autoJob?.cancel(); autoJob = null; autoWaiting = false; if (conn != Conn.On) KeepAlive.stop(appCtx) }
+        if (v) { autoHold = false; autoConnectNow() } else { appInBackground() }
     }
-    var autoWait by mutableStateOf(store.autoWait)
-    fun changeAutoWait(v: Boolean) { autoWait = v; store.autoWait = v; if (!v && conn != Conn.On) KeepAlive.stop(appCtx) else if (v) autoConnectNow() }
     var fastMode by mutableStateOf(store.fastMode)
     fun changeFast(v: Boolean) { fastMode = v; store.fastMode = v; fastBroken = false; fastFails = 0 }
     var autoReconnect by mutableStateOf(store.autoReconnect)
@@ -211,7 +209,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var autoWaiting by mutableStateOf(false)
 
     fun connectClassic(d: BluetoothDevice, auto: Boolean = false) { lastReconnect = { connectClassic(d) }; connect(ClassicTransport(d), "classic", d.address, auto) }
-    fun connectBle(d: BluetoothDevice, auto: Boolean = false, background: Boolean = false) { lastReconnect = { connectBle(d) }; connect(BleTransport(ctx, d, background), "ble", d.address, auto) }
+    fun connectBle(d: BluetoothDevice, auto: Boolean = false) { lastReconnect = { connectBle(d) }; connect(BleTransport(ctx, d), "ble", d.address, auto) }
     fun usbDrivers(): List<UsbSerialDriver> = UsbHost.list(ctx)
     fun connectUsb(d: UsbSerialDriver, auto: Boolean = false) { lastReconnect = { connectUsb(d) }; connect(UsbTransport(ctx, d), "usb", "", auto) }
     fun connectWifi(auto: Boolean = false) { lastReconnect = { connectWifi() }; connect(WifiTransport(ctx, wifiHost, wifiPort.toIntOrNull() ?: 35000), "wifi", "", auto) }
@@ -221,62 +219,57 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     fun lastAdapterAddress(): String = store.lastAddress
 
-    private fun wantWait() = autoConnect && autoWait && !autoHold && store.lastKind.isNotEmpty()
-
     /**
-     * Connects to the last adapter by itself and KEEPS TRYING until it works (the old version tried once at start, so if the
-     * adapter was not awake yet you had to search and connect by hand every time). Tries: direct connection first, then a
-     * Bluetooth "background connection" that Android completes the moment the adapter appears (ignition ON). While waiting a
-     * quiet notification keeps the app alive (setting "Keep waiting for the car in the background").
+     * Connects to the last adapter when the app is OPEN, a few times, then stops. It runs only while the app is in the
+     * foreground (MainActivity.onResume starts it, onPause stops it), so it does not drain the phone battery in the pocket.
+     * Tries: up to 4 times, about 1 minute in total. Press Connect (or open the app again) to retry.
      */
     @Suppress("DEPRECATION")
     fun autoConnectNow() {
-        if (!autoConnect || autoHold || conn != Conn.Off || autoJob?.isActive == true) return
+        if (!autoConnect || autoHold || !appVisible || conn != Conn.Off || autoJob?.isActive == true) return
         refreshPermission()
         val kind = store.lastKind
         if (kind.isEmpty()) return
         autoJob = viewModelScope.launch {
             autoWaiting = true
-            AppLog.i("[APP] auto-connect: waiting for the car ($kind ${store.lastAddress})", true)
-            if (autoWait) KeepAlive.start(appCtx, true)
+            AppLog.i("[APP] auto-connect: trying $kind ${store.lastAddress} while the app is open", true)
             try {
-                var n = 0
-                while (autoConnect && !autoHold) {
-                    if (conn == Conn.On) return@launch
-                    if (conn == Conn.Connecting) { delay(500); continue }
-                    n++
+                for (n in 1..4) {
+                    if (conn != Conn.Off) return@launch
                     refreshPermission()
-                    if ((kind == "ble" || kind == "classic") && !(btPermission && btOn())) {
-                        connStatus = "Waiting for Bluetooth to be on and allowed..."
-                        delay(3000); continue
-                    }
-                    AppLog.i("[APP] auto-connect try $n", true)
+                    if ((kind == "ble" || kind == "classic") && !(btPermission && btOn())) { connStatus = "Turn Bluetooth on to connect automatically."; return@launch }
+                    AppLog.i("[APP] auto-connect try $n of 4", true)
                     when (kind) {
                         "wifi" -> connectWifi(true)
-                        "usb" -> { val u = UsbHost.list(ctx).firstOrNull(); if (u != null) connectUsb(u, true) else { connStatus = "Waiting for the USB cable..."; delay(2000); continue } }
+                        "usb" -> { val u = UsbHost.list(ctx).firstOrNull() ?: return@launch; connectUsb(u, true) }
                         else -> {
                             val d = pairedDevices().firstOrNull { it.address == store.lastAddress }
                                 ?: try { BluetoothAdapter.getDefaultAdapter()?.getRemoteDevice(store.lastAddress) } catch (e: Exception) { null }
-                            if (d == null) { delay(3000); continue }
-                            if (kind == "ble") connectBle(d, true, background = n >= 2 && n % 2 == 0) else connectClassic(d, true)
+                                ?: return@launch
+                            if (kind == "ble") connectBle(d, true) else connectClassic(d, true)
                         }
                     }
                     while (conn == Conn.Connecting) delay(300)
                     if (conn == Conn.On) { AppLog.i("[APP] auto-connect worked on try $n", true); return@launch }
-                    connStatus = "Waiting for the car. Turn the ignition on: Obdy connects by itself."
-                    delay(minOf(2000L + n * 1500L, 15000L))
+                    if (n < 4) { connStatus = "Car not answering yet. Turn the ignition on. Trying again..."; delay(10_000L) }
                 }
+                connStatus = "Not connected. Turn the ignition on and press Connect."
+                AppLog.i("[APP] auto-connect gave up after 4 tries", true)
             } finally {
                 autoWaiting = false
-                if (conn != Conn.On && !wantWait()) KeepAlive.stop(appCtx)
             }
         }
     }
 
+    /** Called when the app goes to the background: no more automatic tries until it is opened again. */
+    @Volatile var appVisible = false
+    fun appInBackground() { appVisible = false; autoJob?.cancel(); autoJob = null; autoWaiting = false }
+    fun appForeground() { appVisible = true }
+
     private fun connect(t: Transport, kind: String, address: String, auto: Boolean = false) {
         AppLog.i((if (auto) "[APP] auto-connect via " else "[YOU] connect via ") + "$kind $address", true)
         if (auto && conn == Conn.Connecting) return
-        if (!auto) { autoHold = false; autoJob?.cancel(); autoJob = null; autoWaiting = false }   // a hand connection replaces a waiting one
+        if (!auto) { autoHold = false; appInBackground() }   // a hand connection replaces an automatic try
         disconnect()
         reconnectEnabled = true
         conn = Conn.Connecting
@@ -334,7 +327,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         try { client?.close() } catch (_: Exception) {}
         client = null
         if (conn != Conn.Off) { conn = Conn.Off; connStatus = "Not connected" }
-        if (wantWait() || autoWaiting) KeepAlive.start(appCtx, true) else KeepAlive.stop(appCtx)
+        KeepAlive.stop(appCtx)
         adapter = null
         stopRecordingInternal(save = true)
         tripAcc?.let { finishTrip() }
@@ -351,7 +344,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The Disconnect button: stops everything and does not try again by itself. */
-    fun userDisconnect() { autoHold = true; autoJob?.cancel(); autoJob = null; autoWaiting = false; reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; if (parkingOn && conn == Conn.On) saveParkingHere(false); disconnect() }
+    fun userDisconnect() { autoHold = true; appInBackground(); reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; if (parkingOn && conn == Conn.On) saveParkingHere(false); disconnect() }
 
     private fun startReconnect() {
         reconnectJob?.cancel()
@@ -360,14 +353,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             try {
                 for (i in 1..4) {
                     delay(3000)
-                    if (conn != Conn.Off || !reconnectEnabled) return@launch
+                    if (conn != Conn.Off || !reconnectEnabled || !appVisible) return@launch
                     connStatus = "Connection lost. Reconnecting ($i of 4)..."
                     lastReconnect?.invoke()
                     while (conn == Conn.Connecting) delay(300)
                     if (conn == Conn.On) { say("Reconnected."); return@launch }
                 }
                 connStatus = "Connection lost. Could not reconnect."
-                autoConnectNow()
             } finally { reconnecting = false }
         }
     }
