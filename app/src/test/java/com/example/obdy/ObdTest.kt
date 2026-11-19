@@ -499,7 +499,7 @@ class DossierTest {
 class GmlanTest {
     @Test fun faultListFromSecondId() {
         // GMLAN A9 81 answers come one code per frame from 5xx, not from the 6xx id the module normally answers from.
-        val r = ObdParse.parse("541 81 45 45 5A 2B 00 00 00\r541 81 C4 60 00 08 00 00 00\r541 81 00 00 00 FF 00 00 00\r\r>")
+        val r = ObdParse.parse("541 81 45 45 5A 95 00 00 00\r541 81 C4 60 00 08 00 00 00\r541 81 00 00 00 FF 00 00 00\r\r>")
         val rows = r.frames.filter { it.header == Gm.uudtId("641") && it.u(0) == 0x81 }
         val list = DtcDecode.fromGmlanRows(rows)
         assertEquals(2, list.size)
@@ -512,13 +512,12 @@ class GmlanTest {
 
 class GmlanStatusTest {
     @Test fun supportedListIsNotACountOfFaults() {
-        // from the real deep scan: 01 = supported and healthy, 25 = P0128 stored, final 81 00 00 00 FF ends the list
-        val r = ObdParse.parse("5E8 81 00 11 00 01\r5E8 81 01 28 00 25\r5E8 81 01 33 00 01\r5E8 81 06 06 00 21\r5E8 81 00 00 00 FF\r\r>")
+        // from the real deep scan: 01/21/25 = catalogue records (not faults), 29 = P0128 confirmed, B9 = P0011 current, FF ends the list
+        val r = ObdParse.parse("5E8 81 00 11 00 B9\r5E8 81 01 28 00 29\r5E8 81 01 33 00 01\r5E8 81 06 06 00 21\r5E8 81 00 54 00 25\r5E8 81 00 00 00 FF\r\r>")
         val list = DtcDecode.fromGmlanRows(r.frames.filter { it.header == "5E8" && it.u(0) == 0x81 })
         assertEquals(2, list.size)
-        assertEquals("P0128", list[0].code)
-        assertTrue(list[0].status.contains("failed since last clear"))
-        assertEquals("history", list[0].kind)
+        assertEquals("P0011", list[0].code); assertEquals("active", list[0].kind)
+        assertEquals("P0128", list[1].code); assertEquals("history", list[1].kind)
     }
     @Test fun healthyOnlyListIsEmpty() {
         val r = ObdParse.parse("5EA 81 07 41 00 01\r5EA 81 00 00 00 FF\r\r>")

@@ -239,7 +239,7 @@ class BusTest {
                 c == "ATCAF1" -> { formatting = true; "OK" }
                 c.startsWith("AT") || c.startsWith("ST") -> "OK"
                 // the module answers only when asked by hand; its list is raw frames from 541 with no length byte
-                c == "03A981FF00000000" && !formatting -> "541 81 44 7A 00 09\r541 81 00 00 00 FF"
+                c == "03A981FF00000000" && !formatting -> "541 81 44 7A 00 19\r541 81 00 00 00 FF"
                 else -> "NO DATA"
             }
         }
