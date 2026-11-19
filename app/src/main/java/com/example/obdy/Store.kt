@@ -26,6 +26,13 @@ class AiRecord(val timeMs: Long, val title: String, val text: String)
 class Store(private val ctx: Context) {
     private val prefs = ctx.getSharedPreferences("obdy", Context.MODE_PRIVATE)
     private fun file(name: String) = File(ctx.filesDir, name)
+    private val prefLog = android.content.SharedPreferences.OnSharedPreferenceChangeListener { p, k ->
+        try {
+            val secret = Regex("key|token|password|secret", RegexOption.IGNORE_CASE).containsMatchIn(k ?: "")
+            AppLog.i("[SETTING] $k = " + (if (secret) "***" else p.all[k].toString().take(200)), true)
+        } catch (_: Exception) {}
+    }
+    init { prefs.registerOnSharedPreferenceChangeListener(prefLog) }
 
     // ---- simple settings
     var themeKey: String get() = prefs.getString("theme", "dash") ?: "dash"; set(v) { prefs.edit().putString("theme", v).apply() }

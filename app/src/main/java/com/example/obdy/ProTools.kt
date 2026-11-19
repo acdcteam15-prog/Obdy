@@ -456,7 +456,12 @@ class ProTools(private val vm: ObdyVm) {
                 }
             } catch (e: Exception) {
                 vm.say("Lever watch stopped: " + (e.message ?: "adapter error"))
-            } finally { leverRunning = false; vm.livePaused = false }
+            } finally {
+                leverRunning = false
+                // Give the adapter back: readWatch leaves ATSH7E2 + ATCRA7EA set, which hides the engine computer from every later request (log 2026-11-19 07:51).
+                try { vm.withCar { resetBus() } } catch (_: Exception) {}
+                vm.livePaused = false
+            }
         }
     }
 

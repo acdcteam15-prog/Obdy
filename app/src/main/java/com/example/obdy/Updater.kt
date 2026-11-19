@@ -65,6 +65,7 @@ object Updater {
         c.setRequestProperty("Accept", "application/vnd.github+json")
         val code = c.responseCode
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
+        AppLog.i("[NET] update check https://api.github.com/repos/$repo/releases/latest -> HTTP $code", true)
         if (code == 404) throw IllegalStateException("No update published yet. Run Rebuild-APK.bat or Publish-Update.bat on the laptop once.")
         if (code !in 200..299) throw IllegalStateException("GitHub answered HTTP $code.")
         val o = JSONObject(text)
@@ -86,6 +87,7 @@ object Updater {
         val d = dir(ctx)
         d.listFiles()?.forEach { if (it.name.endsWith(".part")) it.delete() }
         val part = File(d, info.name + ".part")
+        AppLog.i("[NET] downloading update ${info.name} (${info.size} bytes) from ${info.url}", true)
         val c = URL(info.url).openConnection() as HttpURLConnection
         c.connectTimeout = 20_000; c.readTimeout = 60_000
         c.instanceFollowRedirects = true

@@ -619,18 +619,18 @@ fun FullLogPanel(vm: ObdyVm) {
     LaunchedEffect(Unit) { vm.refreshFullLog() }
     Panel {
         Title("Full log")
-        Hint("Everything Obdy does is saved here: what you pressed, every request sent to the adapter and every answer, scan results and live values every 5 seconds. It stays after you close the app. Share the file with me, then delete it to start clean.")
+        Hint("Everything Obdy does is saved here: what you pressed, every request sent to the adapter and every answer, scan results, every decoded value, every line of text the screens showed, every setting change, internet requests and crashes, each with its full date and time. It stays after you close the app. Share the file with me, then delete it to start clean.")
         val kb = vm.fullLogSize / 1024
         Label(if (kb < 1024) "$kb KB saved" else "${"%.1f".format(kb / 1024.0)} MB saved", bold = true, size = 13)
         SoftButton("Share the full log file", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { vm.shareFullLog() }
         SoftButton("Refresh size", Modifier.fillMaxWidth()) { vm.refreshFullLog() }
-        SoftButton("Delete the log", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { ask = true }
+        SoftButton("Archive the log and start a new one", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { ask = true }
     }
     if (ask) AlertDialog(
         onDismissRequest = { ask = false },
-        title = { Text("Delete the full log?") },
-        text = { Text("This removes everything saved so far (${vm.fullLogSize / 1024} KB). Share it first if you still need it.") },
-        confirmButton = { TextButton(onClick = { ask = false; vm.deleteFullLog() }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = { ask = false }) { Text("Keep it") } }
+        title = { Text("Archive the full log?") },
+        text = { Text("The log so far (${vm.fullLogSize / 1024} KB) is kept in an archive file and a new log starts. Sharing the log sends the archive and the new log together.") },
+        confirmButton = { TextButton(onClick = { ask = false; vm.deleteFullLog() }) { Text("Archive") } },
+        dismissButton = { TextButton(onClick = { ask = false }) { Text("Cancel") } }
     )
 }

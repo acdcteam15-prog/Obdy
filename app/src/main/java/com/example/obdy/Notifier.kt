@@ -32,7 +32,7 @@ object Notifier {
             .setContentText(lines.joinToString(", "))
             .setStyle(NotificationCompat.BigTextStyle().bigText(lines.joinToString("\n")))
             .setContentIntent(open).setAutoCancel(true).build()
-        try { ctx.getSystemService(NotificationManager::class.java).notify(1001, n) } catch (_: SecurityException) {}
+        AppLog.i("[APP] notification: ${lines.joinToString(", ")}", true); try { ctx.getSystemService(NotificationManager::class.java).notify(1001, n) } catch (_: SecurityException) {}
     }
 
     /** New fault codes found by the automatic scan on connect. */
@@ -46,6 +46,6 @@ object Notifier {
             .setContentText(lines.joinToString(", "))
             .setStyle(NotificationCompat.BigTextStyle().bigText(lines.joinToString("\n")))
             .setContentIntent(open).setAutoCancel(true).build()
-        try { ctx.getSystemService(NotificationManager::class.java).notify(1002, n) } catch (_: SecurityException) {}
+        AppLog.i("[APP] notification: ${lines.joinToString(", ")}", true); try { ctx.getSystemService(NotificationManager::class.java).notify(1002, n) } catch (_: SecurityException) {}
     }
 }

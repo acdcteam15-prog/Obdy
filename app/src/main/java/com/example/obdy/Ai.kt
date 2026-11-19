@@ -34,6 +34,7 @@ object Ai {
             AiType.Claude -> claude(p, prompt, image)
         }
     } catch (e: Exception) {
+        AppLog.i("[NET] AI request failed: ${e.javaClass.simpleName}: ${e.message}", true)
         AiResult(null, "Could not reach ${p.name} (${e.javaClass.simpleName}: ${e.message}). Check the internet, or the address for a local server.", null)
     }
 
@@ -41,6 +42,8 @@ object Ai {
     fun test(p: AiProvider): AiResult = ask(p, "Reply with the single word OK.")
 
     private fun post(url: String, headers: Map<String, String>, body: JSONObject): Pair<Int, String> {
+        AppLog.i("[NET] POST " + url.replace(Regex("key=[^&]+"), "key=***") + " (keys hidden)", true)
+        AppLog.i("[NET] request: " + body.toString().replace(Regex("[A-Za-z0-9+/=]{200,}")) { "<" + it.value.length + " base64 characters>" }, true)
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = "POST"
         c.connectTimeout = 20_000
@@ -51,6 +54,7 @@ object Ai {
         c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
         val code = c.responseCode
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
+        AppLog.i("[NET] HTTP $code reply: $text", true)
         return code to text
     }
 

@@ -101,20 +101,29 @@ class MainActivity : AppCompatActivity() {
                 android.view.MotionEvent.ACTION_UP -> {
                     val moved = Math.hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble())
                     val where = vm.overlay ?: listOf("Home", "Live", "Faults", "Tools", "Car", "Lab").getOrElse(vm.tab) { "tab ${vm.tab}" }
-                    AppLog.i(if (moved < 24) "[YOU] tap at ${ev.x.toInt()},${ev.y.toInt()} on $where" else "[YOU] swipe/scroll ${(ev.x - downX).toInt()},${(ev.y - downY).toInt()} on $where")
+                    AppLog.i(if (moved < 24) "[YOU] tap at ${ev.x.toInt()},${ev.y.toInt()} on $where" + (ScreenLog.labelAt(window.decorView, downX, downY)?.let { " -> \"$it\"" } ?: "") else "[YOU] swipe/scroll ${(ev.x - downX).toInt()},${(ev.y - downY).toInt()} on $where")
                 }
             }
         } catch (_: Exception) { }
         return super.dispatchTouchEvent(ev)
     }
 
-    override fun onPause() { AppLog.i("[APP] app went to the background"); super.onPause() }
+    private val shotHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val shotTick = object : Runnable {
+        override fun run() {
+            try { ScreenLog.snapshot(window.decorView, vm.overlay ?: listOf("Home", "Live", "Faults", "Tools", "Car", "Lab").getOrElse(vm.tab) { "tab ${vm.tab}" }) } catch (_: Throwable) {}
+            shotHandler.postDelayed(this, 700)
+        }
+    }
+
+    override fun onPause() { shotHandler.removeCallbacks(shotTick); AppLog.i("[APP] app went to the background"); super.onPause() }
     override fun onStop() { AppLog.i("[APP] app not visible"); AppLog.flush(); super.onStop() }
     override fun onDestroy() { AppLog.i("[APP] app closed (or rotated)"); AppLog.flush(); super.onDestroy() }
 
     override fun onResume() {
         AppLog.i("[APP] app in the foreground")
         super.onResume()
+        shotHandler.removeCallbacks(shotTick); shotHandler.postDelayed(shotTick, 400)
         vm.refreshPermission()
         vm.refreshUpdateState()
         vm.refreshChecked()

@@ -47,7 +47,7 @@ class ElmClient(private val transport: Transport) {
         if (r.isNotEmpty() && !r.contains('>')) {
             AppLog.i("!! $cmd: no prompt after $ms ms, partial reply discarded", true)
             incompleteReplies++
-            try { transport.write(""); transport.readUntilPrompt(700) } catch (_: Exception) {}      // a bare carriage return stops any output the adapter is still sending
+            try { AppLog.i(">> (stop: carriage return)", true); transport.write(""); AppLog.late(transport.readUntilPrompt(700), "answer to the stop") } catch (_: Exception) {}      // a bare carriage return stops any output the adapter is still sending
             transport.drain()
             return ""
         }
@@ -235,7 +235,7 @@ class ElmClient(private val transport: Transport) {
     suspend fun broadcastFaults(): Map<String, List<Frame>> {
         try {
             at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATCF500"); at("ATCM700"); at("ATSH101"); at("ATST96")
-            val r = query("FE03A98112000000", 3000)       // only 5xx frames reach the phone now (before: all bus traffic, which drowned the answers)
+            val r = query("FE03A98112000000", 7000)       // only 5xx frames reach the phone now (before: all bus traffic, which drowned the answers)
             return r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }.groupBy { it.header }
         } finally {
             try { at("ATCAF1"); aimReset(); at("ATST32") } catch (_: Exception) {}
@@ -369,7 +369,7 @@ class ElmClient(private val transport: Transport) {
             val a = m.probe.resp.toInt(16); val b = uudt.toInt(16)
             at("ATCAF0"); at("ATCRA"); at("ATCF%03X".format(a and b)); at("ATCM%03X".format(0x7FF and (a xor b).inv())); at("ATST96")
             for (mask in listOf("FF", "12", "08")) {
-                val r = query("03A981${mask}00000000", 2500)
+                val r = query("03A981${mask}00000000", 7000)   // the ECM sends 70+ frames and needs about 3 s; at 2.5 s the list was cut and thrown away (log 14:07:20)
                 val rows = r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }
                 if (rows.isNotEmpty()) {
                     val list = DtcDecode.fromGmlanRows(rows)

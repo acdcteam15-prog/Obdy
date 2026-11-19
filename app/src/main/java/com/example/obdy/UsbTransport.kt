@@ -111,6 +111,6 @@ class UsbTransport(private val ctx: Context, private val driver: UsbSerialDriver
         sb.toString()
     }
 
-    override fun drain() { try { val p = port; val b = ByteArray(512); while (p != null && p.read(b, 10) > 0) { } } catch (_: Exception) {} }
+    override fun drain() { try { val p = port; val b = ByteArray(512); val sb = StringBuilder(); while (p != null) { val n = p.read(b, 10); if (n <= 0) break; sb.append(String(b, 0, n, Charsets.US_ASCII)) }; AppLog.late(sb.toString()) } catch (_: Exception) {} }
     override fun close() { try { port?.close() } catch (_: Exception) {}; port = null }
 }

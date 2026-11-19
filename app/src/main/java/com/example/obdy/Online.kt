@@ -11,10 +11,12 @@ class OnlineInfo(val recalls: List<Recall>, val complaintTotal: Int, val complai
 /** Public safety data from NHTSA (US government). It covers US-market cars; GCC cars are often built the same, but check with your dealer. */
 object Online {
     private fun get(url: String): String {
+        AppLog.i("[NET] GET $url", true)
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000; c.readTimeout = 25_000
         c.setRequestProperty("Accept", "application/json")
         val code = c.responseCode
+        AppLog.i("[NET] HTTP $code", true)
         if (code !in 200..299) throw IllegalStateException("NHTSA answered HTTP $code")
         return c.inputStream.use { String(it.readBytes(), Charsets.UTF_8) }
     }

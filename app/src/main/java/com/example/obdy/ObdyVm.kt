@@ -359,14 +359,17 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 var last = System.nanoTime()
                 val t0 = last
                 var cycle = 0
+                var wasPaused = false
                 while (currentCoroutineContext().isActive) {
-                    if (livePaused) { delay(150); last = System.nanoTime(); continue }       // a pro tool (monitor, sweep, timer...) owns the adapter
+                    if (livePaused) { wasPaused = true; delay(150); last = System.nanoTime(); continue }
+                    if (wasPaused) { wasPaused = false; fastFails = 0; fastBroken = false }       // a pro tool (monitor, sweep, timer...) owns the adapter
                     val ids = pollIds(cycle)
                     if (ids.isEmpty()) { cycle++; delay(400); continue }
                     var answered = 0
                     /** Stores one reading. Values a car sends as "no signal" (speed 255 km/h, 0.0 V system voltage) are shown as "--", not as a number. */
                     fun accept(p: Pid, v: Double) {
                         answered++; dead[p.id] = 0
+                        AppLog.i("[VALUE] ${p.name}=${Calc.fmt(v, 2)}")
                         rawValues[p.id] = v
                         val invalid = (p.id == 0x0D && v >= 255.0) || (p.id == 0x42 && v <= 0.0)
                         if (p.id == 0x42) volt42Bad = invalid
@@ -420,7 +423,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         for (e in Gm.extPids) {
                             if ((dead[-e.name.hashCode()] ?: 0) >= 3 && cycle % 32 != 0) continue
                             val v = c.exclusive { readExt(e) }
-                            if (v != null) { extValues[e.name] = v; dead[-e.name.hashCode()] = 0 } else dead[-e.name.hashCode()] = (dead[-e.name.hashCode()] ?: 0) + 1
+                            if (v != null) { extValues[e.name] = v; dead[-e.name.hashCode()] = 0; AppLog.i("[VALUE] ${e.name}=${Calc.fmt(v, 1)}") } else dead[-e.name.hashCode()] = (dead[-e.name.hashCode()] ?: 0) + 1
                         }
                     }
                     val now = System.nanoTime()
@@ -660,7 +663,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (f == null) { say("The log file is empty."); return }
         shareFile(f, "text/plain")
     }
-    fun deleteFullLog() { AppLog.clear(); refreshFullLog(); say("Log deleted.") }
+    fun deleteFullLog() { AppLog.clear(); refreshFullLog(); say("Log archived. A new log started; sharing sends both.") }
 
     fun shareText(text: String) {
         val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
@@ -839,6 +842,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (conn != Conn.On) { say("Connect to the car first."); return }
         if (deep && blockedWhileMoving("The deep scan")) return
         scanBusy = true; scanProgress = "Reading the engine computer..."
+        val pausedBefore = livePaused
+        if (deep) livePaused = true      // log 2026-11-19 07:28: live requests slipped in between module reads and desynchronised the adapter (STOPPED)
         AppLog.i("[YOU] pressed ${if (deep) "Deep scan" else "Quick scan"}", keep = true)
         viewModelScope.launch {
             try {
@@ -922,6 +927,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 scanHistory = store.loadScans()
                 say(if (faults.isEmpty()) "No fault codes found." else "${faults.size} fault code(s) found.")
             } finally {
+                if (deep) livePaused = pausedBefore
                 scanBusy = false; scanProgress = ""; scanFraction = null
             }
         }

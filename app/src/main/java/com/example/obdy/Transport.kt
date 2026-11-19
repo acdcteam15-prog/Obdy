@@ -90,7 +90,7 @@ class ClassicTransport(private val device: BluetoothDevice) : Transport {
         sb.toString()
     }
 
-    override fun drain() { try { val i = input; while (i != null && i.available() > 0) i.skip(i.available().toLong()) } catch (_: Exception) {} }
+    override fun drain() { try { val i = input; val sb = StringBuilder(); while (i != null && i.available() > 0) { val b = ByteArray(i.available()); val n = i.read(b); if (n <= 0) break; sb.append(String(b, 0, n, Charsets.US_ASCII)) }; AppLog.late(sb.toString()) } catch (_: Exception) {} }
     override fun close() { try { socket?.close() } catch (_: Exception) {}; socket = null }
 }
 
@@ -140,7 +140,7 @@ class WifiTransport(private val ctx: Context, private val host: String, private 
         sb.toString()
     }
 
-    override fun drain() { try { val i = socket?.getInputStream(); while (i != null && i.available() > 0) i.skip(i.available().toLong()) } catch (_: Exception) {} }
+    override fun drain() { try { val i = socket?.getInputStream(); val sb = StringBuilder(); while (i != null && i.available() > 0) { val b = ByteArray(i.available()); val n = i.read(b); if (n <= 0) break; sb.append(String(b, 0, n, Charsets.US_ASCII)) }; AppLog.late(sb.toString()) } catch (_: Exception) {} }
     override fun close() { try { socket?.close() } catch (_: Exception) {}; socket = null }
 }
 
@@ -181,6 +181,7 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
 
     private val cb = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            AppLog.i("[LINK] Bluetooth LE connection: status=$status newState=$newState (2 = connected, 0 = disconnected)", true)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -190,6 +191,7 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            try { AppLog.i("[LINK] Bluetooth LE services (status $status): " + g.services.joinToString { it.uuid.toString() }, true) } catch (_: Exception) {}
             val p = if (status == BluetoothGatt.GATT_SUCCESS) pick(g) else null
             if (p == null) { ready.completeExceptionally(IOException("This Bluetooth LE device has no serial (UART) service. Is it an OBD adapter?")); return }
             writeCh = p.second
@@ -202,6 +204,7 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            AppLog.i("[LINK] Bluetooth LE notifications enabled: status=$status", true)
             if (status != BluetoothGatt.GATT_SUCCESS) ready.completeExceptionally(IOException("Bluetooth LE notification setup failed (status $status)")) else ready.complete(Unit)
         }
 
@@ -211,6 +214,7 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) { append(c.value) }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) AppLog.i("[LINK] Bluetooth LE write result: status=$status", true)
             if (status != BluetoothGatt.GATT_SUCCESS) writeDone?.completeExceptionally(IOException("Bluetooth LE write failed (status $status)")) else writeDone?.complete(Unit)
         }
     }
@@ -263,7 +267,7 @@ class BleTransport(private val ctx: Context, private val device: BluetoothDevice
         return synchronized(lock) { val s = incoming.toString(); incoming.setLength(0); s }
     }
 
-    override fun drain() { synchronized(lock) { incoming.setLength(0) } }
+    override fun drain() { synchronized(lock) { if (incoming.isNotEmpty()) AppLog.late(incoming.toString()); incoming.setLength(0) } }
     override fun close() { try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null }
 }
 
