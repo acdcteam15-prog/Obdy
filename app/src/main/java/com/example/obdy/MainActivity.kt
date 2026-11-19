@@ -125,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         shotHandler.removeCallbacks(shotTick); shotHandler.postDelayed(shotTick, 400)
         vm.refreshPermission()
+        vm.autoConnectNow()
         vm.refreshUpdateState()
         vm.refreshChecked()
     }

@@ -26,24 +26,26 @@ class KeepAlive : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { release(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+        val waiting = intent?.getBooleanExtra("wait", false) == true
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CH, "Connected to the car", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n: Notification = NotificationCompat.Builder(this, CH)
             .setSmallIcon(R.drawable.ic_stat_obdy)
-            .setContentTitle("Obdy is connected to the car")
-            .setContentText("Recording and logging continue with the screen off")
+            .setContentTitle(if (waiting) "Obdy is waiting for the car" else "Obdy is connected to the car")
+            .setContentText(if (waiting) "It connects by itself when the ignition is on" else "Recording and logging continue with the screen off")
             .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).build()
         try {
             if (Build.VERSION.SDK_INT >= 29) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) else startForeground(ID, n)
         } catch (e: Exception) { AppLog.i("!! keep-alive could not start: ${e.javaClass.simpleName}: ${e.message}"); stopSelf(); return START_NOT_STICKY }
-        if (lock == null) {
+        if (waiting) release()
+        if (lock == null && !waiting) {
             try {
                 lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "obdy:car").apply { setReferenceCounted(false); acquire(6 * 60 * 60 * 1000L) }
             } catch (_: Exception) {}
         }
-        AppLog.i("[APP] keep-alive on: the app keeps running in the background while connected")
+        AppLog.i(if (waiting) "[APP] keep-alive on: waiting for the car" else "[APP] keep-alive on: the app keeps running in the background while connected")
         return START_NOT_STICKY
     }
 
@@ -54,7 +56,7 @@ class KeepAlive : Service() {
         private const val CH = "car_link"
         private const val ID = 4107
         private const val STOP = "com.example.obdy.KEEPALIVE_STOP"
-        fun start(ctx: Context) { try { ContextCompat.startForegroundService(ctx, Intent(ctx, KeepAlive::class.java)) } catch (e: Exception) { AppLog.i("!! keep-alive start refused: ${e.message}") } }
+        fun start(ctx: Context, waiting: Boolean = false) { try { ContextCompat.startForegroundService(ctx, Intent(ctx, KeepAlive::class.java).putExtra("wait", waiting)) } catch (e: Exception) { AppLog.i("!! keep-alive start refused: ${e.message}") } }
         fun stop(ctx: Context) { try { ctx.startService(Intent(ctx, KeepAlive::class.java).setAction(STOP)) } catch (_: Exception) {} }
     }
 }
