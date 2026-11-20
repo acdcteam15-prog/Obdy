@@ -176,7 +176,7 @@ fun TimelineScreen(vm: ObdyVm) {
         CodeHistorySection(vm)
         Panel {
             Title("Log what happened")
-            Hint("Oil changes, repairs and costs are added by themselves. Log the rest here: Obdy then looks for links, for example an oil change followed by a warning light.")
+            Hint("Oil changes, repairs and costs are added by themselves.")
             for (row in quick.chunked(2)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (q in row) SoftButton(q.label, Modifier.weight(1f)) { logging = q }

@@ -75,7 +75,7 @@ fun DoctorScreen(vm: ObdyVm) {
     ScreenFrame("Adapter doctor", { vm.overlay = null }) {
         Panel {
             Title("Check the adapter")
-            Hint("Tests the adapter itself: what it says it is, battery voltage at the port, speed, protocol, and whether it can read several values at once. Run it the day the adapter arrives, with the ignition ON.")
+            Hint("Tests the adapter: identity, voltage, speed, protocol.")
             NeedConnection(vm)
             GradientButton(if (vm.doctorBusy) "Testing..." else "Run the test", Brand.MainBrush, enabled = !vm.doctorBusy && vm.conn == Conn.On) { vm.runDoctor() }
         }
@@ -105,7 +105,7 @@ fun HealthScreen(vm: ObdyVm) {
     ScreenFrame("Health check", { vm.overlay = null }) {
         Panel {
             Title("Idle health check (25 seconds)")
-            Hint("Warm the engine up first (drive 10 minutes), then park, leave it idling with the A/C and lights off, and press Start. It judges idle stability, fuel trims, the oxygen sensor, charging, air flow and vacuum.")
+            Hint("Warm the engine up first (drive 10 minutes), then park, leave it idling with the A/C and lights off, and press Start.")
             NeedConnection(vm)
             if (vm.healthBusy) { Label("Measuring... ${vm.healthProgress}%", color = Brand.Amber, bold = true); ProgressBar(vm.healthProgress / 100f) }
             GradientButton(if (vm.healthBusy) "Measuring..." else "Start", Brand.AltBrush, enabled = !vm.healthBusy && vm.conn == Conn.On) { vm.runHealth() }
@@ -134,7 +134,7 @@ fun HealthScreen(vm: ObdyVm) {
                 Hint("Latest ${Calc.fmt(s.last().second, 1)}  ·  ${s.size} checks over ${Calc.fmt((s.last().first - s.first().first) / 86_400_000.0, 0)} days")
                 Trends.drift(h, key)?.let { Label(it, color = Brand.Amber, size = 13) }
             }
-            if (shown == 0) Hint("Run the health check a few times over several weeks (warm, idling). Graphs and drift warnings appear here, for example a battery that slowly weakens.")
+            if (shown == 0) Hint("Run the health check a few times over several weeks (warm, idling).")
         }
     }
 }
@@ -145,7 +145,7 @@ fun TestsScreen(vm: ObdyVm) {
     ScreenFrame("Engine self-tests", { vm.overlay = null }) {
         Panel {
             Title("What the car measured about itself")
-            Hint("Misfire counters per cylinder (even before a code appears), catalyst, oxygen sensors and EVAP leak tests. Numbers are raw values; PASS means inside the limits the car sets for itself.")
+            Hint("Misfire counters per cylinder (even before a code appears), catalyst, oxygen sensors and EVAP leak tests.")
             NeedConnection(vm)
             if (vm.testsBusy) Label(vm.testsProgress, color = Brand.Amber, bold = true)
             GradientButton(if (vm.testsBusy) "Reading..." else "Read the tests", Brand.MainBrush, enabled = !vm.testsBusy && vm.conn == Conn.On) { vm.readTests() }
@@ -155,7 +155,7 @@ fun TestsScreen(vm: ObdyVm) {
         if (vm.tests.isNotEmpty()) Panel {
             Title(if (fails.isEmpty()) "All ${vm.tests.size} tests inside limits" else "${fails.size} of ${vm.tests.size} tests outside limits")
             for (f in fails.take(10)) Label("${f.name}: ${f.fmt(f.value)} (limit ${f.fmt(f.min)} to ${f.fmt(f.max)}), ${f.what}", color = Brand.Red, size = 13)
-            if (fails.isNotEmpty()) Hint("An outside-limit test is an early warning. Misfire counts above the limit on one cylinder point to that cylinder's plug, coil or injector.")
+            if (fails.isNotEmpty()) Hint("An outside-limit test is an early warning.")
         }
         for ((mid, list) in vm.tests.groupBy { it.mid }) {
             Panel {
@@ -179,7 +179,7 @@ fun ExpensesScreen(vm: ObdyVm) {
             Label("${vm.repairs.size} entries  ·  total ${Calc.fmt(Expenses.total(vm.repairs), 2)}", bold = true)
             for ((cat, sum) in Expenses.byCategory(vm.repairs)) Label("$cat: ${Calc.fmt(sum, 2)}", size = 13, color = Brand.TextSecondary)
             GradientButton("Add a repair, service or cost", Brand.MainBrush) { editing = RepairRecord(vm.newId(), System.currentTimeMillis(), "", "Service", 0.0, vm.car.odometerKm, "", "", "") }
-            Hint("What you already replaced is also sent to the AI, so it does not suggest the same part again. It also appears in the PDF report.")
+            Hint("What you already replaced is also sent to the AI, so it does not suggest the same part again.")
         }
         for (r in vm.repairs) {
             Panel {

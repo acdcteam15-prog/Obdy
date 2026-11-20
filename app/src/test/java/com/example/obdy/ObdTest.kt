@@ -111,7 +111,7 @@ class ObdTest {
         val v = BatteryTest.evaluate(12.6, 8.5, 14.1, 14.2)
         assertEquals(Level.Good, v[0].level); assertEquals(Level.Bad, v[1].level)
         assertEquals(Level.Good, v[2].level); assertEquals(Level.Good, v[3].level)
-        assertEquals(Level.Bad, BatteryTest.evaluate(null, null, 12.4, null)[0].level)
+        assertEquals(Level.Warn, BatteryTest.evaluate(null, null, 12.4, null)[0].level)
     }
 
     @Test fun maintenance() {
@@ -535,12 +535,5 @@ class InsightsTest {
     @Test fun odometerMatch() {
         val c = OdoFinder.candidates("IPC", "244", "644", "22000D", intArrayOf(0x00, 0x2C, 0x48, 0x10), 290200)
         assertTrue(c.isNotEmpty())
-    }
-    @Test fun gearFinderListsOnlyChangingValues() {
-        val snaps = mapOf(
-            "Park" to listOf("221901" to intArrayOf(0), "221902" to intArrayOf(5), "221903" to null),
-            "Drive" to listOf("221901" to intArrayOf(3), "221902" to intArrayOf(5), "221903" to intArrayOf(1)))
-        val c = GearFinder.changes(snaps)
-        assertEquals(1, c.size); assertEquals("221901", c[0].request)
     }
 }

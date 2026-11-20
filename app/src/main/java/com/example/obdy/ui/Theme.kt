@@ -40,6 +40,8 @@ object Palettes {
             Color(0xFFFFF1F1), Color(0xFFB59A9C), Color(0xFFFF4D4D), Color(0xFFE53935), Color(0xFFFF8A00), Color(0xFF7A1010), Color(0xFFFF4D4D)),
         Palette("stealth", "Stealth (AMOLED)", false, Color(0xFF000000), Color(0xFF0A0A0A), Color(0xFF242424), Color(0xFF000000), Color(0xFF171717),
             Color(0xFFEDEDED), Color(0xFF8A8A8A), Color(0xFF7CFFB2), Color(0xFF3DDC84), Color(0xFF00B0FF), Color(0xFF3A3A3A), Color(0xFF8A8A8A)),
+        Palette("neon", "Neon (purple and pink)", false, Color(0xFF0B0716), Color(0xFF161029), Color(0xFF2E2350), Color(0xFF100A1F), Color(0xFF221A3D),
+            Color(0xFFF5F0FF), Color(0xFFA79BC9), Color(0xFFFF4FD8), Color(0xFF8A3FFC), Color(0xFFFF4FD8), Color(0xFF00C6FF), Color(0xFF00E5A0)),
         Palette("light", "Daylight", true, Color(0xFFF4F5F8), Color(0xFFFFFFFF), Color(0xFFC9CEDA), Color(0xFFE8EAF0), Color(0xFFDFE3EC),
             Color(0xFF14171F), Color(0xFF515A70), Color(0xFFD97800), Color(0xFFE08A00), Color(0xFFE64A19), Color(0xFF00809A), Color(0xFF16B0CC)),
     )
@@ -65,6 +67,20 @@ object Brand {
     val Red = Color(0xFFFF5252)
     val Amber = Color(0xFFFFB300)
     val Blue = Color(0xFF448AFF)
+
+    /** Vivid colour pairs for icons and tiles. Every tool gets its own pair (stable from its name), in every theme. */
+    val Vivid: List<Pair<Color, Color>> = listOf(
+        Color(0xFFFF6B6B) to Color(0xFFFF9F43),   // coral -> orange
+        Color(0xFF7C4DFF) to Color(0xFFB388FF),   // violet
+        Color(0xFF00C6FF) to Color(0xFF0072FF),   // sky -> blue
+        Color(0xFF00E5A0) to Color(0xFF00B8D4),   // mint -> teal
+        Color(0xFFFF4FA3) to Color(0xFFFF8AC4),   // pink
+        Color(0xFFFFC233) to Color(0xFFFF8F00),   // gold
+        Color(0xFF5EE7DF) to Color(0xFF6A8DFF),   // aqua -> periwinkle
+        Color(0xFFB4EC51) to Color(0xFF429321),   // lime -> green
+    )
+    fun vivid(key: String): Pair<Color, Color> = Vivid[Math.floorMod(key.hashCode(), Vivid.size)]
+    fun vividBrush(key: String): Brush { val (a, b) = vivid(key); return Brush.linearGradient(listOf(a, b)) }
 
     val MainBrush: Brush get() = Brush.linearGradient(listOf(palette.gradA1, palette.gradA2))
     val AltBrush: Brush get() = Brush.linearGradient(listOf(palette.gradB1, palette.gradB2))

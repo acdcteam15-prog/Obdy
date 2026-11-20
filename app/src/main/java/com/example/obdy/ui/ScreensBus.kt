@@ -85,7 +85,7 @@ fun BusesScreen(vm: ObdyVm) {
     ScreenFrame("Second bus (pin 1)", { vm.overlay = null }, subtitle = "Low-speed single-wire network") {
         Panel {
             Title("What this does")
-            Hint("GM cars have a fast bus (pins 6 and 14, which the Deep scan already reads) and often a slow single-wire bus on pin 1 for body parts. This switches your adapter to pin 1 (needs an STN adapter such as the vLinker MC+), listens, looks for modules there and reads their codes. It only listens and asks; nothing is changed, and the adapter returns to the fast bus afterwards.")
+            Hint("GM cars have a fast bus (pins 6 and 14, which the Deep scan already reads) and often a slow single-wire bus on pin 1 for body parts.")
             NeedCar(vm)
             GradientButton(if (p.busBusy) "Working..." else "Scan the pin 1 bus", Brand.MainBrush, Modifier.fillMaxWidth(), enabled = !p.busBusy && vm.conn == Conn.On) { p.scanLowSpeed() }
             if (p.busBusy) { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { StatusDot(Brand.Accent, pulsing = true); Hint(p.busStatus) } }
@@ -122,7 +122,7 @@ fun MonitorScreen(vm: ObdyVm) {
     ScreenFrame("Bus monitor", { vm.overlay = null }, subtitle = "Listen to what the modules say") {
         Panel {
             Title("Listen")
-            Hint("Shows every CAN frame (id and data bytes). The fast bus carries far more frames than a Bluetooth adapter can pass on, so enter up to 4 ids to listen to (3 hex digits each, separated by commas); empty = everything (frames may be dropped).")
+            Hint("Shows every CAN frame (id and data bytes).")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Choice("Fast bus (6+14)", bus == 0) { bus = 0 }
                 Choice("Pin 1 bus", bus == 1) { bus = 1 }
@@ -155,7 +155,7 @@ fun MonitorScreen(vm: ObdyVm) {
 
         Panel {
             Title("Signal finder")
-            Hint("Find which byte means what. 1) Record 5 seconds while nothing happens. 2) Record while you do ONE thing (open a door, press the brake, turn the wheel). Bytes that only changed in step 2 are listed; save one under a name and it appears on the Live signals screen. Use the same bus and ids for both recordings.")
+            Hint("Find which byte means what.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SoftButton(if (p.capBusy == "base") "Recording..." else "1  Record quiet", Modifier.weight(1f), enabled = p.capBusy == null && vm.conn == Conn.On) { p.capture(busOf(bus), filter, 5, bus == 1, "base") }
                 SoftButton(if (p.capBusy == "act") "Recording..." else "2  Record the action", Modifier.weight(1f), enabled = p.capBusy == null && vm.conn == Conn.On && p.finderBase != null) { p.capture(busOf(bus), filter, 8, bus == 1, "act") }
@@ -222,7 +222,7 @@ fun SignalsScreen(vm: ObdyVm) {
         } }
         Panel {
             Title("Live")
-            Hint("Listens to the ids of your saved signals and shows each value as it changes (several updates per second). Name a signal \"Speed\" if you want alerts that only apply while driving; otherwise the speed from Live data is used.")
+            Hint("Listens to the ids of your saved signals and shows each value as it changes (several updates per second).")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Choice("Fast bus (6+14)", bus == 0) { bus = 0 }
                 Choice("Pin 1 bus", bus == 1) { bus = 1 }
@@ -283,7 +283,7 @@ fun SweepScreen(vm: ObdyVm) {
     ScreenFrame("Data sweep", { vm.overlay = null }, subtitle = "Find what each module can tell (read only)") {
         Panel {
             Title("Sweep a module")
-            Hint("Asks one module for its data identifiers (service 22) one after another and lists the ones that answer. It only reads: a safety check refuses to send anything else. Pick a module and a range; a range takes about 1 to 3 minutes. GM does not publish what each identifier means, so you get the raw bytes and a guess; watch one while you do something (rev the engine, switch the A/C) to learn what it is.")
+            Hint("Asks one module for its data identifiers (service 22) one after another and lists the ones that answer.")
             if (mods.isEmpty()) Hint("Run a Deep scan first so Obdy knows the modules.")
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for ((i, x) in mods.withIndex()) Choice(x.name.take(22), modIdx == i) { modIdx = i }
@@ -317,7 +317,7 @@ fun SweepScreen(vm: ObdyVm) {
         }
         Panel {
             Title("Watch list")
-            Hint("Values you chose to watch, read again and again from their module. Good for watching a temperature or a counter while the engine runs.")
+            Hint("Values you chose to watch, read again and again from their module.")
             if (p.watches.isEmpty()) Hint("Nothing yet: press \"Watch this\" on a sweep result.")
             for (w in p.watches) Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) { Text(w.name, color = Brand.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold); Text("${w.resp} 22 ${w.did}  ·  ${p.watchRaw[w.name] ?: "no answer"}", color = Brand.TextSecondary, fontSize = 11.sp) }
@@ -382,8 +382,8 @@ fun ActiveTestsScreen(vm: ObdyVm) {
     ScreenFrame("Active tests", { vm.overlay = null }, subtitle = "Make a part work, safely") {
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { AppIcon(Ic.Warning, size = 22.dp, color = Brand.Amber); Title("Read this first") }
-            Hint("An active test sends the car a command that makes one part work (a fan, a relay, a light). GM does not publish these commands, and none are built into Obdy: a wrong one can do the wrong thing. Add only commands you got from a source you trust for THIS car (for example the factory service information).")
-            Hint("Safety built in: the car must stand still, the battery must be above 11.8 V, only service 2F, AE or 31 can be used (never write, reset or security commands), the test runs for at most 30 seconds, you can press Stop at any moment, and the \"give control back\" command is always sent at the end, even after an error.")
+            Hint("An active test sends the car a command that makes one part work (a fan, a relay, a light).")
+            Hint("Car must stand still, battery above 11.8 V, max 30 s.")
         }
         for (t in p.tests) Panel {
             Title(t.title)
@@ -419,7 +419,7 @@ fun ActiveTestsScreen(vm: ObdyVm) {
         }
         Panel {
             Title("Service resets")
-            Hint("Oil life reset, TPMS relearn and the throttle idle relearn on this car are done from the dash and by driving, not by a scanner command Obdy can verify. The steps are in Tools > Relearn guides and Car guide.")
+            Hint("Oil life, TPMS and idle relearns are done from the dash and by driving.")
             SoftButton("Open the relearn guides", Modifier.fillMaxWidth()) { vm.overlay = "relearn" }
         }
     }
@@ -443,7 +443,7 @@ fun InventoryScreen(vm: ObdyVm) {
     ScreenFrame("Module inventory", { vm.overlay = null }, subtitle = "Every module, its numbers and VIN") {
         Panel {
             Title("All modules")
-            Hint("Reads the part number, software and calibration numbers and the VIN stored inside every module the Deep scan found (and the pin 1 modules, if you scanned them). A module whose stored VIN differs from the car's VIN was probably taken from another car; a blank VIN is normal for some modules.")
+            Hint("Part, software and VIN numbers of every module found.")
             NeedCar(vm)
             if (mods.isEmpty()) Hint("Run a Deep scan first.")
             GradientButton(if (p.invBusy) "Reading..." else "Read all modules", Brand.MainBrush, Modifier.fillMaxWidth(), enabled = !p.invBusy && mods.isNotEmpty() && vm.conn == Conn.On) { p.readInventory() }
@@ -478,7 +478,7 @@ fun PerfScreen(vm: ObdyVm) {
     ScreenFrame("Performance", { vm.overlay = null }, subtitle = "0–100 km/h, 100–0 and braking distance") {
         Panel {
             Title("Timer")
-            Hint("Reads the car's own speed signal from the CAN bus about every 0.1 to 0.3 seconds (more exact than GPS) and times 0–60 km/h, 0–100 km/h and 100–0 km/h with the braking distance. Do it only on a closed road or track where it is legal and safe. Start it while standing still, then accelerate; from 100 km/h brake to a stop to time the braking.")
+            Hint("Times 0–60, 0–100 and 100–0 km/h from the car's speed signal.")
             NeedCar(vm)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientButton(if (p.perfRunning) "Timing..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.perfRunning && vm.conn == Conn.On) { p.startPerf() }
@@ -528,7 +528,7 @@ fun NetWatchScreen(vm: ObdyVm) {
     ScreenFrame("Network watch", { vm.overlay = null }, subtitle = "Which module drops out, and the voltage at that moment") {
         Panel {
             Title("Record the moment it goes wrong")
-            Hint("Asks every module you found in the last Deep scan \"are you there?\" about every two seconds, and reads the battery voltage. When a module stops answering, or the voltage falls, it is written down with the time. Leave it running while you try to make the fault happen (select D, steer, start the car), then share the report with your mechanic. It only asks; nothing is changed.")
+            Hint("Asks every module you found in the last Deep scan \"are you there?\" about every two seconds, and reads the battery voltage.")
             NeedCar(vm)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientButton(if (p.netRunning) "Watching..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.netRunning && vm.conn == Conn.On) { p.startNetWatch() }
@@ -551,14 +551,14 @@ fun NetWatchScreen(vm: ObdyVm) {
         Panel {
             Title("If the computer itself seems to be the problem")
             Label("What an app can and cannot do", bold = true, size = 13)
-            Hint("A GM module's software can only be rewritten (\"reflashed\") with GM's programming system (SPS) through a pass-thru adapter and a GM programming subscription, at a dealer or a shop that has it. This app never writes to a module. What it can do is find which module misbehaves, when, and with what voltage, so the shop starts at the right place.")
+            Hint("A GM module's software can only be rewritten (\"reflashed\") with GM's programming system (SPS) through a pass-thru adapter and a GM programming subscription, at a dealer or a shop that has it.")
             Label("Check these first (cheap, and they cause strange behaviour)", bold = true, size = 13)
             Label("•  Battery and charging: low or swinging voltage makes modules drop off the network and set steering, brake and gear messages. Test the battery under load and the charging at the battery.", size = 13)
             Label("•  Grounds and connectors: a loose ground or a corroded connector at the steering, brake or body modules.", size = 13)
             Label("•  The adapter itself: GM lists a faulty tool cable or a bad contact at the diagnostic socket as a cause of communication codes. If the problem only happens with the adapter plugged in, drive with it unplugged and compare, and try another adapter.", size = 13)
             Label("•  Do not keep clearing codes: a code in history is a clue. Photograph or share the Deep scan first, then clear.", size = 13)
             Label("What to bring to the shop", bold = true, size = 13)
-            Hint("The Deep scan report, the Module inventory (part and software numbers), and this network report. Ask them to check for newer software for the power steering, brake and body modules and to read the codes with GM's own tool.")
+            Hint("The Deep scan report, the Module inventory (part and software numbers), and this network report.")
             SoftButton("Open the Module inventory", Modifier.fillMaxWidth()) { vm.overlay = "inventory" }
         }
     }
@@ -571,7 +571,7 @@ fun LeverPanel(vm: ObdyVm) {
     DisposableEffect(Unit) { onDispose { p.stopLever() } }
     Panel {
         Title("Lever position, live")
-        Hint("In your own test the gearbox computer reported the lever as value 194F: Park 01, Reverse 02, Neutral 04, Drive 06, Manual 08. Start this, then move the lever slowly with your foot on the brake through P, R, N, D and M, and compare with the dash. If the computer sees Drive when the dash skips it, the fault points to the display or the network link to it. If the computer skips Drive too, the lever position sensor, the shift cable or the gearbox computer are the places to look. It is read about three times a second, so move slowly.")
+        Hint("Hold the brake and move the lever slowly through P, R, N, D, M.")
         NeedCar(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GradientButton(if (p.leverRunning) "Watching..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.leverRunning && vm.conn == Conn.On) { p.startLever() }

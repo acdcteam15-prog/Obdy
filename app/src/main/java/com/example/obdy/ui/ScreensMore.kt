@@ -77,7 +77,7 @@ fun ConnectScreen(vm: ObdyVm, askPermissions: () -> Unit) {
             Hint("• vLinker FS / MS (Bluetooth): fast, good build.")
             Hint("• Veepeak OBDCheck BLE: cheap and reliable for engine codes and live data (LE: use the LE search below).")
             Hint("• OBDLink EX or vLinker FS USB: wired, no pairing.")
-            Hint("Avoid unbranded \"ELM327 v2.1\" clones: most are fake and fail on GM modules. BlueDriver only works with its own app, not Obdy.")
+            Hint("Avoid unbranded \"ELM327 v2.1\" clones: most are fake and fail on GM modules.")
             Hint("Turn the ignition ON before connecting. The engine can stay off.")
             SoftButton("Adapter has no power? Check the OBD port fuse", Modifier.fillMaxWidth()) { Fuses.find("panel", "Mini fuse", "14")?.let { vm.openFuse(it) } }
             if (vm.conn != Conn.Off) Label(vm.connStatus, bold = true)
@@ -121,9 +121,9 @@ fun ConnectScreen(vm: ObdyVm, askPermissions: () -> Unit) {
         }
         Panel {
             Title("USB cable")
-            Hint("A wired OBD cable (ELM327 USB, OBDLink EX, vLinker FS USB...) on the phone's USB port, with a USB-OTG adapter if the phone needs one. No pairing and no Bluetooth dropouts. The speed is found automatically.")
+            Hint("Wired OBD cable on the phone's USB port (OTG).")
             val usb = remember(refresh) { vm.usbDrivers() }
-            if (usb.isEmpty()) Hint("No USB cable detected. Plug it into the phone, then press Refresh. If nothing shows, the cable may use a chip Android does not recognise, or the phone may not support USB host mode.")
+            if (usb.isEmpty()) Hint("No USB cable detected. Plug it in, then Refresh.")
             for (d in usb) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Label(UsbHost.label(d), bold = true); Hint("Android asks permission the first time") }
@@ -134,7 +134,7 @@ fun ConnectScreen(vm: ObdyVm, askPermissions: () -> Unit) {
         }
         Panel {
             Title("Wi-Fi adapter")
-            Hint("First join the adapter's own Wi-Fi network in Android's Wi-Fi settings (it has no internet; keep it connected if Android asks). Most use 192.168.0.10 port 35000.")
+            Hint("First join the adapter's own Wi-Fi network in Android's Wi-Fi settings (it has no internet; keep it connected if Android asks).")
             Field("Address", host, { host = it })
             Field("Port", port, { port = it }, number = true)
             GradientButton("Connect over Wi-Fi", Brand.AltBrush) { vm.saveWifi(host, port); vm.connectWifi(); vm.overlay = null }
@@ -225,18 +225,18 @@ fun SettingsScreen(vm: ObdyVm) {
             SectionHead(Ic.Plug, "Connection and screen")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.autoConnect, onCheckedChange = { vm.changeAutoConnect(it) }); Spacer(Modifier.width(8.dp))
-                Column { Label("Connect automatically", bold = true); Hint("Uses the last adapter you connected to. It tries only while the app is open (up to 4 times), so it does not drain the battery. Press Connect any time.") }
+                Column { Label("Connect automatically", bold = true); Hint("Uses the last adapter you connected to.") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.keepScreenOn, onCheckedChange = { vm.changeKeepScreen(it) }); Spacer(Modifier.width(8.dp))
-                Column { Label("Keep the screen on while working", bold = true); Hint("Only while connected and showing live data, a trip, a recording, a scan or a test. Without a connection, or on other screens, the screen turns off normally.") }
+                Column { Label("Keep the screen on while working", bold = true); Hint("Only while connected and showing live data, a trip, a recording, a scan or a test.") }
             }
         }
         Panel {
             SectionHead(Ic.Chart, "Live data")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = vm.showExt, onCheckedChange = { vm.showExt = it }); Spacer(Modifier.width(8.dp))
-                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature on the Live screen. (Oil life was removed: that value turned out to be a fast counter, not oil life. Read it on the dash.) Shown only if the module answers.") }
+                Column { Label("GM extras (experimental)", bold = true); Hint("Transmission fluid temperature on the Live screen.") }
             }
         }
         SmartSettingsPanels(vm)
@@ -304,7 +304,7 @@ fun BatteryScreen(vm: ObdyVm) {
         Panel {
             Title("Charging on your drives")
             val log = vm.chargeLog
-            if (log.isEmpty()) Hint("Start a trip on the Live tab: Obdy logs the voltage at idle and while moving, and saves one line per drive. This catches a charging problem that only shows at night or with A/C on.")
+            if (log.isEmpty()) Hint("Start a trip on the Live tab.")
             else {
                 val idle = log.mapNotNull { r -> r.idleAvg?.let { r.timeMs / 86_400_000.0 to it } }.reversed()
                 val drive = log.mapNotNull { r -> r.driveAvg?.let { r.timeMs / 86_400_000.0 to it } }.reversed()
@@ -401,7 +401,7 @@ fun TripsScreen(vm: ObdyVm) {
                 Label("Average " + (vm.tripL100?.let { Calc.fmt(it, 1) + " L/100 km" } ?: "-"))
                 GradientButton("End trip and save", Brand.DangerBrush) { vm.stopTrip() }
             } else {
-                Hint("Fuel use is worked out from the air flow sensor (and the commanded mixture), so it is an estimate, usually within about 10 percent. Compare once with a full tank to the pump and note the difference.")
+                Hint("Fuel use is worked out from the air flow sensor (and the commanded mixture), so it is an estimate, usually within about 10 percent.")
                 GradientButton("Start trip", Brand.MainBrush, enabled = vm.conn == Conn.On) { vm.startTrip() }
                 if (vm.conn != Conn.On) Hint("Connect to the car first.")
             }
@@ -443,7 +443,7 @@ fun RecordsScreen(vm: ObdyVm) {
         ScreenFrame("Recordings", { vm.overlay = null }) {
             Panel {
                 Title("Record a drive")
-                Hint("On the Live screen press Record, drive, then press Stop. Compare two drives to see if a repair changed fuel trims, voltage or temperatures.")
+                Hint("Live -> Record, drive, Stop.")
                 if (vm.recOn) { Label("Recording: ${vm.recRows} samples", color = Brand.Red, bold = true); GradientButton("Stop and save", Brand.DangerBrush) { vm.stopRecording() } }
                 else GradientButton("Open Live screen", Brand.MainBrush) { vm.overlay = null; vm.tab = 1 }
             }
@@ -523,33 +523,6 @@ fun RelearnScreen(vm: ObdyVm) {
     }
 }
 
-// ====================================================================================== Console
-@Composable
-fun ConsoleScreen(vm: ObdyVm) {
-    val ctx = LocalContext.current
-    var cmd by remember { mutableStateOf("") }
-    var header by remember { mutableStateOf("") }
-    ScreenFrame("Console", { vm.overlay = null }) {
-        Panel {
-            Title("Send to the adapter")
-            Hint("Examples: 0100 (supported values), 0902 (VIN), ATRV (voltage), ATDP (protocol). Header is optional: 7E0 = engine, 7E2 = transmission.")
-            Field("Header (optional, 3 hex digits)", header, { header = it })
-            Field("Command", cmd, { cmd = it })
-            GradientButton(if (vm.consoleBusy) "Waiting..." else "Send", Brand.MainBrush, enabled = !vm.consoleBusy && vm.conn == Conn.On) { vm.consoleSend(header, cmd) }
-            if (vm.conn != Conn.On) Hint("Connect to the car first.")
-        }
-        Panel {
-            Title("Answers")
-            if (vm.consoleOut.isEmpty()) Hint("Nothing yet.")
-            SelectionContainer {
-                Column { for (l in vm.consoleOut.takeLast(60)) Text(l, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = Brand.TextPrimary) }
-            }
-            SoftButton("Clear") { vm.consoleOut.clear() }
-        }
-        FullLogPanel(vm)
-    }
-}
-
 // ====================================================================================== AI analysis
 private fun offlineNotes(vm: ObdyVm): List<String> {
     val n = ArrayList<String>()
@@ -580,7 +553,7 @@ fun AiScreen(vm: ObdyVm) {
         }
         Panel {
             Title("Deeper analysis with AI")
-            Hint("Sends the car data above (codes, freeze frame, live values, notes) to the AI service you chose. Nothing is sent until you press a button.")
+            Hint("Sends the car data above (codes, freeze frame, live values, notes) to the AI service you chose.")
             val ap = vm.activeProvider
             if (ap == null) { Hint("Add an AI service in Settings first."); SoftButton("Open Settings") { vm.overlay = "settings" } }
             else Hint("Using: ${ap.name} (${ap.model})")
@@ -619,7 +592,7 @@ fun FullLogPanel(vm: ObdyVm) {
     LaunchedEffect(Unit) { vm.refreshFullLog() }
     Panel {
         Title("Full log")
-        Hint("Everything Obdy does is saved here: what you pressed, every request sent to the adapter and every answer, scan results, every decoded value, every line of text the screens showed, every setting change, internet requests and crashes, each with its full date and time. It stays after you close the app. Share the file with me, then delete it to start clean.")
+        Hint("Full log of everything Obdy does, with date and time.")
         val kb = vm.fullLogSize / 1024
         Label(if (kb < 1024) "$kb KB saved" else "${"%.1f".format(kb / 1024.0)} MB saved", bold = true, size = 13)
         SoftButton("Share the full log file", Modifier.fillMaxWidth(), enabled = vm.fullLogSize > 0) { vm.shareFullLog() }

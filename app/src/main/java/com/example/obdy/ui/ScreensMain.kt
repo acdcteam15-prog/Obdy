@@ -22,6 +22,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -116,10 +117,13 @@ fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", log
     // The big title shrinks as the page scrolls, and a shadow line appears under the header.
     val k = (scroll.value / 160f).coerceIn(0f, 1f)
     val titleSize = (27f - 7f * k).sp
+    val glow = androidx.compose.animation.core.rememberInfiniteTransition(label = "glow")
+    val gx by glow.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(tween(9000), androidx.compose.animation.core.RepeatMode.Reverse), label = "gx")
     Column(Modifier.fillMaxSize().background(Brand.BgDeep)) {
         Row(
             Modifier.fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(lerp(Brand.Header, Brand.Accent, 0.06f), Brand.Header)))
+                .background(Brush.horizontalGradient(listOf(Brand.palette.gradA1.copy(alpha = 0.16f * (1f - gx)), Color.Transparent, Brand.palette.gradB2.copy(alpha = 0.16f * gx))))
                 .padding(start = 6.dp, end = 6.dp, top = (14f - 6f * k).dp, bottom = (12f - 4f * k).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -137,7 +141,7 @@ fun ScreenFrame(title: String, onBack: (() -> Unit)?, subtitle: String = "", log
                 }
             }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(lerp(Brand.CardBorder, Brand.Accent, 0.3f * k)))
+        Box(Modifier.fillMaxWidth().height(2.dp).graphicsLayer { alpha = 0.35f + 0.5f * k }.background(Brush.horizontalGradient(listOf(Brand.palette.gradA1, Brand.palette.gradA2, Brand.palette.gradB1, Brand.palette.gradB2))))
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
@@ -156,11 +160,12 @@ fun BottomBar(vm: ObdyVm) {
         ) {
             val cell = maxWidth / items.size
             // the sliding highlight behind the selected tab
-            Box(Modifier.offset(x = cell * pos).width(cell).height(54.dp).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(Brand.Accent.copy(alpha = 0.16f)))
+            val selCol by animateColorAsState(targetValue = Brand.vivid(items[vm.tab.coerceIn(0, items.size - 1)].second).first, animationSpec = tween(260), label = "navSel")
+            Box(Modifier.offset(x = cell * pos).width(cell).height(54.dp).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(Brush.verticalGradient(listOf(selCol.copy(alpha = 0.30f), selCol.copy(alpha = 0.10f)))))
             Row(Modifier.fillMaxWidth()) {
                 items.forEachIndexed { i, (ic, label) ->
                     val sel = vm.tab == i
-                    val col by animateColorAsState(targetValue = if (sel) Brand.Accent else Brand.TextSecondary, animationSpec = tween(200), label = "navColor")
+                    val col by animateColorAsState(targetValue = if (sel) Brand.vivid(label).first else Brand.TextSecondary, animationSpec = tween(200), label = "navColor")
                     val lift by animateFloatAsState(targetValue = if (sel) 1f else 0f, animationSpec = spring(dampingRatio = 0.5f, stiffness = 500f), label = "lift")
                     val src = remember { MutableInteractionSource() }
                     Column(
@@ -206,11 +211,9 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "trips" -> TripsScreen(vm)
                     "records" -> RecordsScreen(vm)
                     "relearn" -> RelearnScreen(vm)
-                    "console" -> ConsoleScreen(vm)
                     "ai" -> AiScreen(vm)
                     "parts" -> PartsScreen(vm)
                     "guided" -> GuidedScreen(vm)
-                    "online" -> OnlineScreen(vm)
                     "doctor" -> DoctorScreen(vm)
                     "inspection" -> InspectionScreen(vm)
                     "health" -> HealthScreen(vm)
@@ -222,7 +225,6 @@ fun ObdyRoot(vm: ObdyVm, askPermissions: () -> Unit) {
                     "fuses" -> FusesScreen(vm)
                     "fuellog" -> FuelLogScreen(vm)
                     "partsreg" -> PartsRegisterScreen(vm)
-                    "quote" -> QuoteScreen(vm)
                     "checklist" -> ChecklistScreen(vm)
                     "lab", "chat" -> { LaunchedEffect(Unit) { vm.overlay = null; vm.tab = 5 } }   // Lab is a tab now
                     "gearbox" -> GearboxScreen(vm)
@@ -333,7 +335,6 @@ fun HomeScreen(vm: ObdyVm) {
                     AppIcon(Ic.Warning, size = 22.dp, color = Brand.Amber); Title("Coolant signal dropped out")
                 }
                 Hint(w)
-                Hint("This fits the P0128 code: if the computer sometimes sees a cold engine, it thinks the thermostat is stuck open. Check the coolant sensor connector for corrosion or a loose pin before buying a thermostat.")
                 SoftButton("Got it", Modifier.fillMaxWidth()) { vm.ectNote = null }
             }
         } }
@@ -446,7 +447,7 @@ fun FaultsScreen(vm: ObdyVm) {
             GradientButton("Deep scan", Brand.AltBrush, Modifier.weight(1f), enabled = on && !vm.scanBusy) { vm.scan(true) }
         }
         Text("Scan options are in Settings ›", color = Brand.Accent, fontSize = 12.sp, modifier = Modifier.clickable { vm.overlay = "settings" })
-        Hint("Quick: engine and transmission (a few seconds). Deep: also brakes, airbag, body, steering and every other module that answers (about 30 seconds).")
+        Hint("Quick: engine and transmission (a few seconds).")
         if (!on) Panel { Label("Not connected."); SoftButton("Connect to the car") { vm.overlay = "connect" } }
         vm.scanWarning?.let { w -> if (!vm.scanBusy) Panel {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -472,7 +473,7 @@ fun FaultsScreen(vm: ObdyVm) {
                     AppIcon(Ic.Info, size = 20.dp, color = Brand.Amber)
                     Label("Message on the dash but no code here?", bold = true, color = Brand.Amber)
                 }
-                Hint("Warnings like \"Service Power Steering\", ABS or airbag are stored in their own modules, not the engine. Run a Deep scan to read them.")
+                Hint("Warnings like \"Service Power Steering\", ABS or airbag are stored in their own modules, not the engine.")
             }
             if (vm.visibleFaults.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -515,7 +516,7 @@ fun FaultsScreen(vm: ObdyVm) {
                 Title("Readiness self-tests")
                 val sup = m.monitors.filter { it.supported }
                 val done = sup.count { it.complete }
-                Hint("$done of ${sup.size} finished. Unfinished tests run by themselves during normal mixed driving; they only matter for an emissions test.")
+                Hint("$done of ${sup.size} finished. Unfinished tests complete with normal driving.")
                 for (pair in sup.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (x in pair) ReadyChip(x.name, x.complete, Modifier.weight(1f))
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -557,7 +558,7 @@ fun FaultsScreen(vm: ObdyVm) {
             }
             if (on) {
                 GradientButton("Clear codes", Brand.DangerBrush, enabled = !vm.clearing && !vm.scanBusy) { confirmClear = true }
-                if (vm.faults.any { it.kind == "permanent" }) Hint("Permanent codes cannot be cleared by any scanner: the engine computer removes them itself after the test passes again on a few drives.")
+                if (vm.faults.any { it.kind == "permanent" }) Hint("Permanent codes clear themselves after a few good drives.")
             }
         }
 
@@ -881,12 +882,12 @@ fun BigStat(label: String, value: String, color: androidx.compose.ui.graphics.Co
 fun OdoFinderPanel(vm: ObdyVm) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brand.Track).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Label("Read the odometer from a module", bold = true, size = 13)
-        Hint("Your car does not send the odometer as a standard value. Obdy can look inside every module (read only) for a number that matches the mileage you typed. Needs a Deep scan first.")
+        Hint("Your car does not send the odometer as a standard value.")
         if (vm.odoSource == ObdyVm.OdoSource.Module) {
             Label("In use: mileage is read from a module.", color = Brand.Green, size = 13)
             SoftButton("Stop using it", Modifier.fillMaxWidth()) { vm.forgetOdoModule() }
         } else SoftButton(if (vm.explorerBusy == "odo") "Searching... ${vm.scanProgress}" else "Search the modules", Modifier.fillMaxWidth(), enabled = vm.explorerBusy == null && vm.conn == Conn.On) { vm.findOdometer() }
-        if (vm.odoSearchDone && vm.odoCandidates.isEmpty()) Hint("No match. The odometer is probably kept in the instrument cluster on a request Obdy does not know yet; the distance-counter tracking keeps working.")
+        if (vm.odoSearchDone && vm.odoCandidates.isEmpty()) Hint("No match. Distance-counter tracking keeps working.")
         for (c in vm.odoCandidates.take(6)) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("%,d km".format(c.value.toInt()), color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -915,16 +916,11 @@ fun ToolsScreen(vm: ObdyVm) {
     val groups = listOf(
         ToolGroup("Diagnose", Ic.Cpu, null, listOf(
             ToolItem(Ic.Cpu, "Engine self-tests", "Misfire counts, catalyst") { vm.overlay = "tests" },
-            ToolItem(Ic.Cpu, "Gearbox", "Shifts, live lever position") { vm.overlay = "gearbox" },
+            ToolItem(Ic.Cpu, "Gearbox", "Shifts, lever position") { vm.overlay = "gearbox" },
             ToolItem(Ic.Cpu, "Network watch", "Which module drops out") { vm.overlay = "netwatch" },
             ToolItem(Ic.Cpu, "Module inventory", "Part numbers, software, VIN") { vm.overlay = "inventory" },
             ToolItem(Ic.Shield, "Inspection check", "Ready for the test?") { vm.overlay = "inspection" },
             ToolItem(Ic.Doc, "PDF report", "For your mechanic") { vm.makeReport() },
-        )),
-        ToolGroup("Ask and check", Ic.Chat, null, listOf(
-            ToolItem(Ic.Chat, "Claude Lab", "Chat with photos and data") { vm.tab = 5 },
-            ToolItem(Ic.Camera, "Quote checker", "Photo of a workshop quote") { vm.overlay = "quote" },
-            ToolItem(Ic.Globe, "Online checks", "Recalls and research") { vm.overlay = "online" },
         )),
         ToolGroup("Fix and find", Ic.Wrench, null, listOf(
             ToolItem(Ic.Wrench, "Relearn guides", "After battery or cleaning") { vm.overlay = "relearn" },
@@ -944,7 +940,6 @@ fun ToolsScreen(vm: ObdyVm) {
             ToolItem(Ic.Gauge, "Live signals", "Your named CAN signals") { vm.overlay = "signals" },
             ToolItem(Ic.Search, "Data sweep", "Find readable values") { vm.overlay = "sweep" },
             ToolItem(Ic.Wrench, "Active tests", "Make a part work, guarded") { vm.overlay = "atests" },
-            ToolItem(Ic.Terminal, "Console", "Raw commands and log") { vm.overlay = "console" },
         )),
     )
     val all = start + groups.flatMap { it.items }
@@ -982,7 +977,7 @@ private fun ScreensFrameTools(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { com.example.obdy.AppLog.i("[YOU] tapped group \"${g.name}\""); toggle(g.name) }.padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Brand.Accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) { AppIcon(g.ic, size = 20.dp, color = Brand.Accent) }
+                            IconChip(g.ic, g.name, 38.dp)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(g.name, color = Brand.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -1016,7 +1011,7 @@ private fun ToolRow(t: ToolItem) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.example.obdy.AppLog.i("[YOU] tapped tool \"${t.title}\""); t.open() }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Brand.Accent.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) { AppIcon(t.ic, size = 19.dp, color = Brand.Accent) }
+        IconChip(t.ic, t.title, 36.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(t.title, color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -1051,7 +1046,7 @@ fun CarScreen(vm: ObdyVm) {
                 Field("Year", year, { year = it }, number = true, modifier = Modifier.weight(1f))
                 Field("Mileage (km)", km, { km = it }, number = true, modifier = Modifier.weight(1f))
             }
-            Hint("Type the dash mileage once. After that Obdy keeps it up to date by itself (${vm.odoSource.label}), even for drives without the app. Mileage source: Settings.")
+            Hint("Type the dash mileage once; Obdy keeps it updated (${vm.odoSource.label}).")
             Field("Engine (as on the car, optional)", engine, { engine = it })
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Field("Tank (L)", tank, { tank = it }, number = true, modifier = Modifier.weight(1f))
@@ -1079,8 +1074,8 @@ fun CarScreen(vm: ObdyVm) {
                 bold = true, color = if (nOver > 0) Brand.Red else if (nSoon > 0) Brand.Amber else Brand.Green,
             )
             SoftButton("Use the manual's schedule (hot-weather severe use)", Modifier.fillMaxWidth()) { vm.applyManualSchedule(true) }
-            Hint("Fills the intervals from your owner's manual: oil, filters, plugs, transmission fluid, coolant, belts. Your last-done dates are kept.")
-            Hint("Tap Edit and enter when each job was last done (date and mileage). Obdy then counts the next due date and mileage from it. Press Done after a service: it also goes into your repair and cost history.")
+            Hint("Fills the intervals from your owner's manual: oil, filters, plugs, transmission fluid, coolant, belts.")
+            Hint("Tap Edit and enter when each job was last done (date and mileage).")
             if (kpd != null) Hint("Your usual driving: about ${Calc.fmt(kpd * 30, 0)} km a month (worked out from the mileages you entered).")
             if (nNone > 0) SoftButton("Set the $nNone not-recorded jobs to one date", Modifier.fillMaxWidth()) { bulk = true }
             for (d in list) {
@@ -1199,7 +1194,7 @@ fun CarScreen(vm: ObdyVm) {
             title = { Text("Set all not-recorded jobs") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Hint("Use the date and mileage of your last full service, or today if you are starting fresh. You can correct single items later with Edit.")
+                    Hint("Use the date and mileage of your last full service, or today if you are starting fresh.")
                     Field("Date (YYYY-MM-DD)", date, { date = it })
                     Field("Mileage (km)", km, { km = it }, number = true)
                 }

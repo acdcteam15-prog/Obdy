@@ -117,7 +117,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val km = a.km + (d - a.d31)
                 if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km))
             }
-            else -> store.saveOdo(Store.OdoAnchor(car.odometerKm, d, System.currentTimeMillis()))   // codes were cleared: counter restarted
+            else -> {   // the counter restarted (codes cleared somewhere else, or battery disconnected): km driven before that are unknown
+                store.saveOdo(Store.OdoAnchor(car.odometerKm, d, System.currentTimeMillis()))
+                AppLog.i("[APP] distance counter restarted (was ${a.d31}, now $d): mileage may be short, type the dash value", true)
+                say("The car's distance counter restarted, so the mileage may be short. Check the dash and type it in Car settings.")
+            }
         }
         odoSource = OdoSource.Tracked
     }
@@ -157,7 +161,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var autoConnect by mutableStateOf(store.autoConnect)
     fun changeAutoConnect(v: Boolean) {
         autoConnect = v; store.autoConnect = v
-        if (v) { autoHold = false; autoConnectNow() } else { appInBackground() }
+        if (v) { autoHold = false; autoConnectNow() } else { cancelAuto() }
     }
     var fastMode by mutableStateOf(store.fastMode)
     fun changeFast(v: Boolean) { fastMode = v; store.fastMode = v; fastBroken = false; fastFails = 0 }
@@ -263,13 +267,14 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     /** Called when the app goes to the background: no more automatic tries until it is opened again. */
     @Volatile var appVisible = false
-    fun appInBackground() { appVisible = false; autoJob?.cancel(); autoJob = null; autoWaiting = false }
+    fun appInBackground() { appVisible = false; cancelAuto() }
+    private fun cancelAuto() { autoJob?.cancel(); autoJob = null; autoWaiting = false }
     fun appForeground() { appVisible = true }
 
     private fun connect(t: Transport, kind: String, address: String, auto: Boolean = false) {
         AppLog.i((if (auto) "[APP] auto-connect via " else "[YOU] connect via ") + "$kind $address", true)
         if (auto && conn == Conn.Connecting) return
-        if (!auto) { autoHold = false; appInBackground() }   // a hand connection replaces an automatic try
+        if (!auto) { autoHold = false; cancelAuto() }   // a hand connection replaces an automatic try
         disconnect()
         reconnectEnabled = true
         conn = Conn.Connecting
@@ -344,7 +349,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The Disconnect button: stops everything and does not try again by itself. */
-    fun userDisconnect() { autoHold = true; appInBackground(); reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; if (parkingOn && conn == Conn.On) saveParkingHere(false); disconnect() }
+    fun userDisconnect() { autoHold = true; cancelAuto(); reconnectEnabled = false; reconnectJob?.cancel(); reconnecting = false; if (parkingOn && conn == Conn.On) saveParkingHere(false); disconnect() }
 
     private fun startReconnect() {
         reconnectJob?.cancel()
@@ -988,6 +993,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val results = ArrayList<String>()
+                // Clearing codes restarts the car's "distance since codes cleared" counter, which is what tracks the mileage.
+                // Read it FIRST, or every km since the last sync is lost (log 2026-11-20 07:28: the mileage came out about 15 km short).
+                try { syncOdometer() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                val hadPermanent = faults.any { it.kind == "permanent" }
                 val ok = withCar { clearEmissionCodes() }
                 results.add(if (ok == true) "Engine and transmission: cleared" else "Engine and transmission: no confirmation")
                 if (ok == true) addEvent("clear", "Codes cleared", faults.joinToString { it.code.take(5) }.take(120))
@@ -996,7 +1005,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     withCar { clearModule(m) }?.let { results.add(it) }
                 }
                 scanNotes = results; moduleFaults = emptyList()
-                say("Clear command sent. Scanning again...")
+                say(if (hadPermanent) "Cleared stored and pending codes. A PERMANENT code cannot be erased by any scan tool: the car removes it itself after the fault stays away for a few drives. Scanning again..." else "Clear command sent. Scanning again...")
+                if (hadPermanent) AppLog.i("[APP] permanent code present: clear (mode 04) does not remove it by design, the ECM drops it after passing drive cycles", true)
                 scanBusy = false
                 scan(deep = foundModules.isNotEmpty())
             } finally { clearing = false }
@@ -1183,24 +1193,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     var gearEngage by mutableStateOf<List<Engagement>>(emptyList())
     var gearExtra by mutableStateOf<String?>(null)
 
-    // ---- "Find the real gear value": snapshots of the gearbox computer's GM answers in each lever position (read only)
-    var gearSnaps by mutableStateOf<Map<String, List<Pair<String, IntArray?>>>>(emptyMap())
-    var gearSnapBusy by mutableStateOf<String?>(null)
-    var gearSnapMsg by mutableStateOf("")
-    val gearChanges: List<GearFinder.Change> get() = GearFinder.changes(gearSnaps)
-    fun gearSnapshot(position: String) {
-        if (gearSnapBusy != null || conn != Conn.On) { if (conn != Conn.On) say("Connect to the car first."); return }
-        val tcm = Gm.probes().firstOrNull { it.resp == "7EA" } ?: return
-        gearSnapBusy = position; gearSnapMsg = "Asking the gearbox computer..."
-        viewModelScope.launch {
-            try {
-                val rows = withCar { readModuleData(FoundModule(tcm, "", tcm.name), GearFinder.requests, "ATST19", 400) { p -> gearSnapMsg = p } } ?: return@launch
-                gearSnaps = gearSnaps + (position to rows)
-                say("$position: ${GearFinder.answered(rows)} of ${rows.size} gearbox values answered")
-            } finally { gearSnapBusy = null; gearSnapMsg = "" }
-        }
-    }
-    fun gearSnapClear() { gearSnaps = emptyMap() }
     private var gearJob: Job? = null
 
     /** Records engine speed and vehicle speed as fast as the adapter allows. [engage] = parked test (25 s), otherwise a drive (up to 4 minutes, until Stop). */
@@ -1312,7 +1304,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 "${r.name} [${r.ids}] codes=${r.codes ?: "no list"}" + (info?.items?.joinToString("") { "\n  ${it.first}: ${it.second}" } ?: " (identity not read)")
             }.ifBlank { "(no deep scan yet)" },
             "ENGINE SELF-TESTS (Mode 06), decoded by the app" to Dossier.testsText(tests),
-            "GEARBOX LEVER-POSITION SNAPSHOTS (GM Mode 22 1900-19FF on 7E2, read only)" to (if (gearSnaps.isEmpty()) "(not done)" else gearSnaps.entries.joinToString("\n") { (k, v) -> "$k: ${GearFinder.answered(v)} answered" } + "\n" + gearChanges.joinToString("\n") { it.line() }),
             "DISCOVERY PROBE (read-only)" to labProbe.joinToString("\n"),
             "GEARBOX RECORDING (rpm and speed, shifts and engagement found by the app)" to (if (gearSamples.isEmpty()) "" else gearReportText()),
             "LOG: kept conversations (scans, self-tests, probes)" to AppLog.dumpKept().ifBlank { "(empty)" },
@@ -1596,48 +1587,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ------------------------------------------------------------------ online checks
-    var online by mutableStateOf<OnlineInfo?>(null)
-    var onlineBusy by mutableStateOf(false)
-    var onlineError by mutableStateOf<String?>(null)
-    var webAiBusy by mutableStateOf(false)
-    var webAiText by mutableStateOf<String?>(null)
-    var webAiError by mutableStateOf<String?>(null)
-
-    fun loadOnline() {
-        if (onlineBusy) return
-        onlineBusy = true; onlineError = null
-        viewModelScope.launch {
-            try { online = withContext(Dispatchers.IO) { Online.load("Chevrolet", "Malibu", car.year) } }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { onlineError = "Could not load: ${e.message}. Check the phone's internet." }
-            finally { onlineBusy = false }
-        }
-    }
-
     fun openUrl(url: String) {
         try { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { say("No browser found.") }
-    }
-
-    fun webSearch(kind: String, code: String?) {
-        val what = if (code != null) "$code ${car.year} Chevrolet Malibu fix" else "${car.year} Chevrolet Malibu common problems service bulletin"
-        openUrl(Online.searchUrl(kind, what))
-    }
-
-    /** Asks the AI to look for known fixes and service bulletins. Only Gemini can really search Google; others answer from what they learned. */
-    fun aiWebSearch(code: String?) {
-        val p = activeProvider
-        if (p == null) { webAiError = "Add an AI provider in Settings first."; return }
-        if (webAiBusy) return
-        webAiBusy = true; webAiError = null
-        val subject = if (code != null) "fault code $code" else "the faults listed above"
-        val prompt = aiPrompt(code, "Task: look for known fixes, technical service bulletins, software updates and common causes for $subject on a ${car.year} Chevrolet Malibu. " +
-            "Name where the information comes from (forum, bulletin, manual). Separate what is well documented from what is only reported by owners. Plain text, short.", withFormat = false)
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, web = p.type == AiType.Gemini) }
-            webAiBusy = false
-            if (r.text != null) webAiText = (if (p.type == AiType.Gemini) "" else "(${p.name} cannot search the web: this answer comes from what it learned in training.)\n\n") + r.text else webAiError = r.error
-        }
     }
 
     // ------------------------------------------------------------------ hide a code inside Obdy (the car is not changed)
@@ -1775,10 +1726,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
             "lab" -> {
                 val b = loadJpeg(uri, 1400)
                 if (b == null) say("Could not read that photo.") else { labImage = b; say("Photo attached") }
-            }
-            "quote" -> {
-                val b = loadJpeg(uri, 1600)
-                if (b == null) say("Could not read that photo.") else { quoteImage = b; say("Photo attached") }
             }
             "restore" -> {
                 val text = try { ctx.contentResolver.openInputStream(uri)?.use { String(it.readBytes(), Charsets.UTF_8) } } catch (e: Exception) { null }
@@ -1996,42 +1943,6 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshChecked() { checkedPre = store.loadChecked("pre"); checkedSummer = store.loadChecked("summer") }
-
-    // ------------------------------------------------------------------ quote checker (photo of a workshop quote)
-    var quoteImage by mutableStateOf<ByteArray?>(null)
-    var quoteText by mutableStateOf<String?>(null)
-    var quoteBusy by mutableStateOf(false)
-    var quoteError by mutableStateOf<String?>(null)
-
-    fun askQuote() {
-        val p = activeProvider
-        val img = quoteImage
-        if (p == null) { quoteError = "Add an AI service in Settings first."; return }
-        if (img == null) { quoteError = "Attach a photo of the quote or invoice first."; return }
-        if (quoteBusy) return
-        quoteBusy = true; quoteError = null
-        val now = System.currentTimeMillis()
-        val schedule = dueList().joinToString("\n") { d ->
-            "- ${d.item.name}: " + when {
-                !d.recorded -> "no record of when it was last done"
-                d.overdue -> "OVERDUE"
-                else -> listOfNotNull(d.kmLeft?.let { "$it km left" }, d.daysLeft?.let { "$it days left" }).joinToString(", ")
-            }
-        }
-        val prompt = aiPrompt(null,
-            "TASK: the attached photo is a workshop quote or invoice for this car (the car is in the UAE). Read every line. Then answer in plain text, short:\n" +
-            "1. A list of the lines with their prices.\n" +
-            "2. For each line say one of: NEEDED NOW (due or overdue by the service status below, or needed for a real fault), DUE LATER (say roughly when), NOT IN THE MANUAL SCHEDULE (optional or an upsell), or POSSIBLY REPEATED (already done recently per the history).\n" +
-            "3. The part of the total that looks justified and the part to question.\n" +
-            "4. Three questions to ask the workshop before agreeing.\n" +
-            "You cannot know local prices: judge need, timing and duplication only, and say so. If the photo is unreadable, say what you could not read.\n" +
-            "SERVICE STATUS OF THIS CAR (from the manual's severe-use schedule):\n$schedule", withFormat = false)
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { Ai.ask(p, prompt, false, img) }
-            quoteBusy = false
-            if (r.text != null) quoteText = r.text.replace("**", "").replace("##", "") else quoteError = r.error
-        }
-    }
 
     // ------------------------------------------------------------------ automatic backup to a folder you choose (Google Drive, phone storage...)
     var autoBackup by mutableStateOf(store.autoBackup)

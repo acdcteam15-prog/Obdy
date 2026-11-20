@@ -126,34 +126,3 @@ object DriveCycle {
         }
     }
 }
-
-/**
- * Finds which gearbox value is the real gear / lever position. The owner records the gearbox computer's answers in each lever
- * position (Park, Reverse, Neutral, Drive, Manual); anything that changes between positions is listed. Read only.
- */
-object GearFinder {
-    /** Requests to try on the gearbox computer (GM Mode 22, 0x1900-0x19FF). 1940 is the fluid temperature: always changes, skipped. */
-    val requests: List<String> = (0x1900..0x19FF).filter { it != 0x1940 }.map { "22%04X".format(it) }
-
-    class Change(val request: String, val values: List<Pair<String, String>>) {
-        fun line(): String = request.drop(2).chunked(2).joinToString(" ") + ": " + values.joinToString("   ") { "${it.first} = ${it.second}" }
-    }
-
-    /** [snaps]: lever position -> (request -> answer bytes, null = no answer). Returns the requests whose answer differs between positions. */
-    fun changes(snaps: Map<String, List<Pair<String, IntArray?>>>): List<Change> {
-        if (snaps.size < 2) return emptyList()
-        val byReq = LinkedHashMap<String, MutableList<Pair<String, String>>>()
-        for ((label, rows) in snaps) for ((req, d) in rows) {
-            if (d == null || d.isEmpty()) continue
-            byReq.getOrPut(req) { ArrayList() }.add(label to d.joinToString(" ") { "%02X".format(it) })
-        }
-        return byReq.filter { (_, v) -> v.size >= 2 && v.map { it.second }.toSet().size > 1 }
-            .map { (k, v) -> Change(k, v) }
-            // Few distinct values and short answers are most likely a position; long noisy answers last.
-            .sortedWith(compareBy({ it.values.maxOf { v -> v.second.length } }, { it.request }))
-            .take(14)
-    }
-
-    /** How many requests of a snapshot got an answer. */
-    fun answered(rows: List<Pair<String, IntArray?>>): Int = rows.count { it.second != null }
-}

@@ -162,7 +162,7 @@ fun ExplorerScreen(vm: ObdyVm) {
     ScreenFrame("Module data", { vm.overlay = null }) {
         Panel {
             Title("What each module tells")
-            Hint("Read-only requests (1A identity and 22 data). Most items are refused by the car; only answers are listed. Numbers are shown raw and as possible values, because GM does not publish what each item means. Steering values (angle, torque, motor current) show up here if the steering module shares them.")
+            Hint("Read-only requests (1A identity and 22 data).")
             if (vm.explorerBusy != null) { Label("Reading... ${vm.scanProgress}", color = Brand.Amber, bold = true) }
         }
         if (vm.explorer.isEmpty() && vm.explorerBusy == null) Hint("Open Faults → Modules → a module → Explore all its data.")
@@ -220,7 +220,7 @@ fun SteeringCheckScreen(vm: ObdyVm) {
     ScreenFrame("Power steering check", { vm.overlay = null }, subtitle = "For the 'Service Power Steering' message") {
         Panel {
             Title("Why this order")
-            Hint("The electric steering motor draws up to 80 A. When the voltage dips, the steering module protects itself and shows the message. So the electrical supply is checked before any steering part.")
+            Hint("The electric steering motor draws up to 80 A.")
         }
         // 1. voltage now
         val v = vm.liveValues[0x42] ?: vm.voltage

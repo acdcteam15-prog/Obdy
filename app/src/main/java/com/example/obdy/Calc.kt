@@ -122,7 +122,7 @@ object BatteryTest {
             out.add(
                 when {
                     idle in 13.2..14.9 -> Verdict("Charging at idle", v, Level.Good, "Alternator is charging.")
-                    idle < 13.0 -> Verdict("Charging at idle", v, Level.Bad, "Not charging enough: alternator, drive belt, or its wiring/fuse. Battery will run flat.")
+                    idle < 13.0 -> Verdict("Charging at idle", v, Level.Warn, "Low at idle. GM voltage control can hold 12.4 to 12.8 V for minutes and then raises it to about 14 V. If it never rises above 13.5 V during a 10 minute drive, suspect the alternator, belt or wiring/fuse.")
                     idle > 15.0 -> Verdict("Charging at idle", v, Level.Bad, "Overcharging: faulty regulator. This cooks the battery and electronics.")
                     else -> Verdict("Charging at idle", v, Level.Warn, "Slightly outside the normal range. Retest with lights and A/C off.")
                 }

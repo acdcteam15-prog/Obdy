@@ -235,8 +235,13 @@ class ElmClient(private val transport: Transport) {
     suspend fun broadcastFaults(): Map<String, List<Frame>> {
         try {
             at("ATFCSM0"); at("ATCRA"); at("ATCAF0"); at("ATCF500"); at("ATCM700"); at("ATSH101"); at("ATST96")
-            val r = query("FE03A98112000000", 10000)       // only 5xx frames reach the phone now (before: all bus traffic, which drowned the answers)
-            return r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }.groupBy { it.header }
+            var r = query("FE03A98112000000", 10000)       // only 5xx frames reach the phone now (before: all bus traffic, which drowned the answers)
+            var rows = r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }
+            if (rows.isEmpty()) {                          // 11-19 15:57 hit the 10 s limit with nothing: ask once more
+                r = query("FE03A98112000000", 12000)
+                rows = r.frames.filter { it.header.startsWith("5") && it.u(0) == 0x81 }
+            }
+            return rows.groupBy { it.header }
         } finally {
             try { at("ATCAF1"); aimReset(); at("ATST32") } catch (_: Exception) {}
         }

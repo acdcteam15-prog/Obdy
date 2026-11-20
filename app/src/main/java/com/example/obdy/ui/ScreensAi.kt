@@ -35,7 +35,7 @@ fun ProvidersPanel(vm: ObdyVm) {
     var editing by remember { mutableStateOf<AiProvider?>(null) }
     Panel {
         Title("AI services")
-        Hint("Add one or more. The selected one answers the analysis, the questions and the part locations. Press Test to prove the key, the model name and the connection work.")
+        Hint("Add a service, select it, press Test.")
         if (vm.providers.isEmpty()) Label("None yet. The built-in offline notes still work.", color = Brand.Amber, size = 13)
         for (p in vm.providers) {
             val active = vm.activeProvider?.id == p.id

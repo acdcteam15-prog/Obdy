@@ -124,7 +124,7 @@ fun FuelLogScreen(vm: ObdyVm) {
     ScreenFrame("Fuel log", { vm.overlay = null }) {
         Panel {
             Title("Fill-ups")
-            Hint("Fill the tank each time and tick \"full tank\". Obdy then works out the real litres per 100 km, and checks its own trip estimate against it.")
+            Hint("Fill the tank each time and tick \"full tank\".")
             GradientButton("Add a fill-up", Brand.MainBrush) { editing = FuelEntry(vm.newId(), System.currentTimeMillis(), vm.car.odometerKm, 0.0, 0.0, true, "") }
         }
         Panel {
@@ -214,7 +214,7 @@ fun PartsRegisterScreen(vm: ObdyVm) {
     ScreenFrame("Parts register", { vm.overlay = null }) {
         Panel {
             Title("Parts you fitted")
-            Hint("Battery, tyres, brake pads, alternator... with the date, mileage and warranty. Obdy reminds you 30 days before a warranty ends, and uses the battery's age for its health score.")
+            Hint("Battery, tyres, brake pads, alternator... with the date, mileage and warranty.")
             GradientButton("Add a part", Brand.MainBrush) { editing = PartRecord(vm.newId(), "", now, vm.car.odometerKm, 0, 0, "") }
         }
         if (vm.registry.isEmpty()) Hint("Nothing registered yet.")
@@ -275,30 +275,6 @@ fun PartsRegisterScreen(vm: ObdyVm) {
     }
 }
 
-// ====================================================================================== Quote checker
-@Composable
-fun QuoteScreen(vm: ObdyVm) {
-    val ctx = LocalContext.current
-    ScreenFrame("Quote checker", { vm.overlay = null }) {
-        Panel {
-            Title("Is the workshop quote fair?")
-            Hint("Photograph a quote or invoice. The AI reads each line and compares it with your car's service schedule and your repair history: what is needed now, what can wait, what looks optional, what you may already have had done.")
-            Hint("It cannot know local prices. It judges need, timing and repeats, and gives you questions to ask.")
-            SoftButton(if (vm.quoteImage != null) "Photo attached (tap to change)" else "Attach a photo of the quote", Modifier.fillMaxWidth()) { vm.pick("quote", "image/*") }
-            if (vm.activeProvider == null) { Hint("Add an AI service in Settings first."); SoftButton("Open Settings") { vm.overlay = "settings" } }
-            GradientButton(if (vm.quoteBusy) "Reading..." else "Check this quote", Brand.AltBrush, enabled = !vm.quoteBusy && vm.activeProvider != null && vm.quoteImage != null) { vm.askQuote() }
-            vm.quoteError?.let { Label(it, color = Brand.Red, size = 13) }
-        }
-        val t = vm.quoteText
-        if (t != null) Panel {
-            Title("What the AI found")
-            SelectionContainer { Text(t, color = Brand.TextPrimary, fontSize = 14.sp) }
-            SoftButton("Copy", Modifier.fillMaxWidth()) { copyText(ctx, t); vm.say("Copied") }
-            Hint("A guide, not a verdict. Ask the workshop the questions above before you agree.")
-        }
-    }
-}
-
 // ====================================================================================== Checklists
 @Composable
 fun ChecklistScreen(vm: ObdyVm) {
@@ -334,7 +310,7 @@ fun SmartSettingsPanels(vm: ObdyVm) {
         SectionHead(Ic.Bolt, "Smart monitoring")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.flightOn, onCheckedChange = { vm.changeFlight(it) }); Spacer(Modifier.width(8.dp))
-            Column { Label("Flight recorder", bold = true); Hint("While connected and the app is open, keeps the last minute of live data. It saves that minute by itself when a code appears, the engine overheats, the voltage drops or the idle turns rough. It does not run with the app closed.") }
+            Column { Label("Flight recorder", bold = true); Hint("While connected and the app is open, keeps the last minute of live data.") }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.coldCapture, onCheckedChange = { vm.changeCold(it) }); Spacer(Modifier.width(8.dp))

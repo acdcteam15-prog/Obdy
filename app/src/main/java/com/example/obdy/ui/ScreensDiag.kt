@@ -202,7 +202,7 @@ fun PartsScreen(vm: ObdyVm) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in listOf("All") + Parts.all.map { it.category }.distinct()) Chip(c, cat == c) { cat = c; selected = null }
                 }
-            } else Hint("Number 1 (red) is the most likely; amber are the next suspects; blue are extra places the AI named. Dashed areas are under the car.")
+            } else Hint("Number 1 (red) is the most likely; amber are the next suspects; blue are extra places the AI named.")
             CarDiagram(pins, selected) { z -> selected = if (selected == z) null else z }
             AnimatedContent(targetState = selected, label = "zone") { z ->
                 if (z != null) Label(z.label + if (z.under) "  (seen from under the car)" else "", bold = true, color = Brand.Accent, size = 13)
@@ -229,10 +229,10 @@ fun PartsScreen(vm: ObdyVm) {
                 if (part.tip.isNotBlank()) Label("Tip: " + part.tip, color = Brand.Amber, size = 13)
             }
         }
-        Hint("Locations are for the 2013 Malibu 2.5 L (left-hand drive). Trim and module positions can differ between builds: check before removing panels.")
+        Hint("Locations are for the 2013 Malibu 2.5 L (left-hand drive).")
         if (!browse && codes.isNotEmpty()) Panel {
             Title("Ask the AI to pin-point it")
-            Hint("The AI names likely parts for this code (and your answers in Find the cause). Treat low confidence as a pointer, not a fact.")
+            Hint("The AI names likely parts for this code (and your answers in Find the cause).")
             GradientButton(if (vm.partsBusy) "Thinking..." else "Locate with AI", Brand.AltBrush, enabled = !vm.partsBusy && vm.activeProvider != null) { vm.locateWithAi() }
             if (vm.activeProvider == null) { Hint("Add an AI service in Settings first."); SoftButton("Open Settings") { vm.overlay = "settings" } }
             vm.partsError?.let { Label(it, color = Brand.Red, size = 13) }
@@ -284,7 +284,7 @@ fun GuidedScreen(vm: ObdyVm) {
             }
             when (vm.gStage) {
                 0 -> {
-                    Hint("Answer what you know. Skip the rest. If you already replaced a part and the code stayed, tick it: the answer then looks for the other causes (cleaning, filters, wiring) instead of the same part.")
+                    Hint("Answer what you know. Tick parts already replaced.")
                     for (q in Guided.questions(code)) {
                         val chosen = vm.gAnswers[q.id] ?: emptyList()
                         Panel {
@@ -345,63 +345,3 @@ fun GuidedScreen(vm: ObdyVm) {
     }
 }
 
-// ====================================================================================== Online checks
-@Composable
-fun OnlineScreen(vm: ObdyVm) {
-    LaunchedEffect(Unit) { if (vm.online == null) vm.loadOnline() }
-    val codes = vm.visibleFaults.map { it.code.take(5) }.distinct().take(4)
-    ScreenFrame("Online checks", { vm.overlay = null }) {
-        Panel {
-            Title("Search the web")
-            Hint("Opens your browser with a ready search for ${vm.car.year} Chevrolet Malibu.")
-            SoftButton("Google: common problems and bulletins", Modifier.fillMaxWidth()) { vm.webSearch("google", null) }
-            for (c in codes) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SoftButton("Google $c", Modifier.weight(1f)) { vm.webSearch("google", c) }
-                    SoftButton("YouTube $c", Modifier.weight(1f)) { vm.webSearch("youtube", c) }
-                }
-            }
-        }
-        Panel {
-            Title("Ask the AI to research it")
-            Hint("Looks for known fixes, service bulletins and software updates. Gemini can really search Google; other services answer from what they learned.")
-            val subject = codes.firstOrNull()
-            GradientButton(if (vm.webAiBusy) "Searching..." else if (subject != null) "Research $subject" else "Research this car", Brand.AltBrush, enabled = !vm.webAiBusy && vm.activeProvider != null) { vm.aiWebSearch(subject) }
-            if (vm.activeProvider == null) { Hint("Add an AI service in Settings first."); SoftButton("Open Settings") { vm.overlay = "settings" } }
-            vm.webAiError?.let { Label(it, color = Brand.Red, size = 13) }
-            val t = vm.webAiText
-            if (t != null) SelectionContainer { Text(t.replace("**", "").replace("##", ""), color = Brand.TextPrimary, fontSize = 14.sp) }
-        }
-        Panel {
-            Title("Official recalls and owner complaints")
-            Hint("From the US safety agency (NHTSA). GCC cars are often built like the US ones, but ask your dealer if a recall applies to your VIN.")
-            if (vm.onlineBusy) Label("Loading...", color = Brand.Amber)
-            vm.onlineError?.let { Label(it, color = Brand.Red, size = 13); SoftButton("Try again") { vm.loadOnline() } }
-            val o = vm.online
-            if (o != null) {
-                Label("${o.recalls.size} recall(s), ${o.complaintTotal} owner complaint(s)", bold = true)
-                for ((comp, n) in o.complaintTop.take(8)) Label("$n  ·  $comp", size = 13)
-            }
-        }
-        val o = vm.online
-        if (o != null) for (r in o.recalls.take(12)) {
-            Panel {
-                Label(r.component, bold = true, size = 14)
-                Hint("Campaign ${r.number}")
-                Label(r.summary.take(260) + if (r.summary.length > 260) "..." else "", size = 13)
-                if (r.remedy.isNotBlank()) Hint("Remedy: " + r.remedy.take(200))
-            }
-        }
-        Panel {
-            Title("About hiding or changing errors")
-            Hint("Obdy only reads the car. It does not change the car's software, so it cannot switch a fault off. What you can do: hide a non-urgent code inside Obdy so it stops cluttering your lists (Faults tab > open the code > Hide in Obdy). Engine misfire, overheating, brake and airbag codes cannot be hidden, because they warn of real danger.")
-            if (vm.hiddenFaults.isNotEmpty()) {
-                Label("Hidden now:", bold = true, size = 13)
-                for (f in vm.hiddenFaults) Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Label(f.code, bold = true); Hint(f.description) }
-                    SoftButton("Show again") { vm.restoreCode(f.code) }
-                }
-            }
-        }
-    }
-}

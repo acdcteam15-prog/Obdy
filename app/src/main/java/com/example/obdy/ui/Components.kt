@@ -67,17 +67,32 @@ import java.util.Locale
 
 @Composable
 fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
     Column(
         modifier
             .fillMaxWidth()
             .animateContentSize()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, 0.045f), Brand.Card)))
-            .border(1.dp, Brush.verticalGradient(listOf(lerp(Brand.CardBorder, Brand.Accent, 0.25f), Brand.CardBorder)), RoundedCornerShape(18.dp))
+            .graphicsLayer { shadowElevation = 6f; this.shape = shape; clip = true }
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, 0.06f), Brand.Card)))
+            .border(1.dp, Brush.linearGradient(listOf(Brand.palette.gradA1.copy(alpha = 0.55f), Brand.CardBorder, Brand.palette.gradB2.copy(alpha = 0.45f))), shape)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         content = content,
     )
+}
+
+/** Rounded square with a vivid gradient and a white icon; colour follows [key]. */
+@Composable
+fun IconChip(ic: Ic, key: String, size: Dp = 42.dp, modifier: Modifier = Modifier) {
+    val (a, _) = Brand.vivid(key)
+    Box(
+        modifier.size(size)
+            .graphicsLayer { shadowElevation = 8f; shape = RoundedCornerShape(size * 0.32f); clip = true; ambientShadowColor = a; spotShadowColor = a }
+            .clip(RoundedCornerShape(size * 0.32f))
+            .background(Brand.vividBrush(key)),
+        contentAlignment = Alignment.Center,
+    ) { AppIcon(ic, size = size * 0.52f, color = Color.White) }
 }
 
 @Composable
@@ -129,31 +144,29 @@ fun SoftButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = t
     }
 }
 
-/** A square action tile with an icon: the main way to start things on Home and Tools. */
+/** A square action tile with a vivid icon chip: the main way to start things on Home and Tools. */
 @Composable
 fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier, accent: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val sc by animateFloatAsState(targetValue = if (pressed) 0.96f else 1f, animationSpec = tween(100), label = "tile")
-    val shape = RoundedCornerShape(18.dp)
+    val sc by animateFloatAsState(targetValue = if (pressed) 0.94f else 1f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 600f), label = "tile")
+    val shape = RoundedCornerShape(22.dp)
     val haptic = LocalHapticFeedback.current
+    val (c1, c2) = Brand.vivid(title)
     Column(
         modifier
-            .graphicsLayer { scaleX = sc; scaleY = sc; alpha = if (enabled) 1f else 0.45f }
+            .graphicsLayer { scaleX = sc; scaleY = sc; alpha = if (enabled) 1f else 0.45f; shadowElevation = 8f; this.shape = shape; clip = true }
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(lerp(Brand.Card, Brand.Accent, if (accent) 0.10f else 0.04f), Brand.Card)))
-            .border(1.dp, if (accent && enabled) Brand.Accent.copy(alpha = 0.6f) else Brand.CardBorder, shape)
+            .background(if (accent) Brush.linearGradient(listOf(c1, c2)) else Brush.linearGradient(listOf(lerp(Brand.Card, c1, 0.16f), Brand.Card, lerp(Brand.Card, c2, 0.08f))))
+            .border(1.dp, Brush.linearGradient(listOf(c1.copy(alpha = 0.7f), c2.copy(alpha = 0.15f))), shape)
             .clickable(interactionSource = src, indication = null, enabled = enabled) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.example.obdy.AppLog.i("[YOU] tapped tile \"$title\""); onClick() }
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(
-            Modifier.size(42.dp).clip(RoundedCornerShape(13.dp))
-                .background(if (accent) Brand.MainBrush else Brush.linearGradient(listOf(Brand.Accent.copy(alpha = 0.20f), Brand.Accent.copy(alpha = 0.08f)))),
-            contentAlignment = Alignment.Center,
-        ) { AppIcon(ic, size = 22.dp, color = if (accent) Color.White else Brand.Accent) }
-        Text(title, color = Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        if (sub.isNotEmpty()) Text(sub, color = Brand.TextSecondary, fontSize = 12.sp, maxLines = 2)
+        if (accent) Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color.White.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) { AppIcon(ic, size = 22.dp, color = Color.White) }
+        else IconChip(ic, title)
+        Text(title, color = if (accent) Color.White else Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        if (sub.isNotEmpty()) Text(sub, color = if (accent) Color.White.copy(alpha = 0.85f) else Brand.TextSecondary, fontSize = 12.sp, maxLines = 2)
     }
 }
 
@@ -164,7 +177,8 @@ fun Reveal(index: Int, modifier: Modifier = Modifier, content: @Composable () ->
     AnimatedVisibility(
         visibleState = state, modifier = modifier,
         enter = fadeIn(animationSpec = tween(300, delayMillis = index * 50)) +
-            slideInVertically(animationSpec = tween(300, delayMillis = index * 50)) { it / 6 },
+            slideInVertically(animationSpec = tween(340, delayMillis = index * 50)) { it / 5 } +
+            androidx.compose.animation.scaleIn(initialScale = 0.96f, animationSpec = tween(340, delayMillis = index * 50)),
     ) { content() }
 }
 
@@ -230,7 +244,7 @@ fun Field(label: String, value: String, onChange: (String) -> Unit, number: Bool
 fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Double, modifier: Modifier = Modifier, decimals: Int = 0, hint: String = "") {
     val span = if (max > min) max - min else 1.0
     val target = if (value == null) 0.0 else ((value - min) / span).coerceIn(0.0, 1.0)
-    val animated by animateFloatAsState(targetValue = target.toFloat(), animationSpec = tween(450), label = "gauge")
+    val animated by animateFloatAsState(targetValue = target.toFloat(), animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 120f), label = "gauge")
     val shown by animateFloatAsState(targetValue = (value ?: 0.0).toFloat(), animationSpec = tween(450), label = "num")
     val hist = remember { ArrayList<Double>() }
     var lo by remember { mutableStateOf<Double?>(null) }
@@ -241,9 +255,9 @@ fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Doub
             lo = minOf(lo ?: value, value); hi = maxOf(hi ?: value, value)
         }
     }
-    val zone = when { target > 0.9 -> Brand.Red; target > 0.75 -> Brand.Amber; else -> Brand.Accent }
+    val accent = Brand.vivid(name).first
+    val zone = when { target > 0.9 -> Brand.Red; target > 0.75 -> Brand.Amber; else -> accent }
     val track = Brand.Track
-    val accent = Brand.Accent
     val dim = Brand.TextSecondary
     Column(
         modifier.clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(lerp(Brand.Card, zone, 0.06f), Brand.Card)))
