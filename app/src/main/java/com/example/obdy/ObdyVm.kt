@@ -117,7 +117,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 val km = a.km + (d - a.d31)
                 if (km != car.odometerKm) setCarQuiet(car.copy(odometerKm = km))
             }
-            else -> store.saveOdo(Store.OdoAnchor(car.odometerKm, d, System.currentTimeMillis()))   // codes were cleared: counter restarted
+            else -> {   // the counter restarted (codes cleared somewhere else, or battery disconnected): km driven before that are unknown
+                store.saveOdo(Store.OdoAnchor(car.odometerKm, d, System.currentTimeMillis()))
+                AppLog.i("[APP] distance counter restarted (was ${a.d31}, now $d): mileage may be short, type the dash value", true)
+                say("The car's distance counter restarted, so the mileage may be short. Check the dash and type it in Car settings.")
+            }
         }
         odoSource = OdoSource.Tracked
     }
@@ -988,6 +992,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val results = ArrayList<String>()
+                // Clearing codes restarts the car's "distance since codes cleared" counter, which is what tracks the mileage.
+                // Read it FIRST, or every km since the last sync is lost (log 2026-11-20 07:28: the mileage came out about 15 km short).
+                try { syncOdometer() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                val hadPermanent = faults.any { it.kind == "permanent" }
                 val ok = withCar { clearEmissionCodes() }
                 results.add(if (ok == true) "Engine and transmission: cleared" else "Engine and transmission: no confirmation")
                 if (ok == true) addEvent("clear", "Codes cleared", faults.joinToString { it.code.take(5) }.take(120))
@@ -996,7 +1004,8 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     withCar { clearModule(m) }?.let { results.add(it) }
                 }
                 scanNotes = results; moduleFaults = emptyList()
-                say("Clear command sent. Scanning again...")
+                say(if (hadPermanent) "Cleared stored and pending codes. A PERMANENT code cannot be erased by any scan tool: the car removes it itself after the fault stays away for a few drives. Scanning again..." else "Clear command sent. Scanning again...")
+                if (hadPermanent) AppLog.i("[APP] permanent code present: clear (mode 04) does not remove it by design, the ECM drops it after passing drive cycles", true)
                 scanBusy = false
                 scan(deep = foundModules.isNotEmpty())
             } finally { clearing = false }

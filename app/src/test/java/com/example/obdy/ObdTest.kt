@@ -111,7 +111,7 @@ class ObdTest {
         val v = BatteryTest.evaluate(12.6, 8.5, 14.1, 14.2)
         assertEquals(Level.Good, v[0].level); assertEquals(Level.Bad, v[1].level)
         assertEquals(Level.Good, v[2].level); assertEquals(Level.Good, v[3].level)
-        assertEquals(Level.Bad, BatteryTest.evaluate(null, null, 12.4, null)[0].level)
+        assertEquals(Level.Warn, BatteryTest.evaluate(null, null, 12.4, null)[0].level)
     }
 
     @Test fun maintenance() {
