@@ -58,7 +58,7 @@ object Pids {
     fun byId(id: Int): Pid? = byId[id]
 
     /** The 10 values shown first on the Live screen. */
-    val defaultLive = listOf(0x0C, 0x0D, 0x05, 0x04, 0x06, 0x07, 0x42, 0x10, 0x11, 0x0F)
+    val defaultLive = listOf(0x1001, 0x0C, 0x0D, 0x05, 0x04, 0x06, 0x07, 0x42, 0x10, 0x11, 0x0F)
 
     /** Several values in one answer: 41 <pid> <data> <pid> <data> ... (data = the whole answer including the leading 41). */
     fun parseMulti(data: ByteArray): Map<Int, Double> {

@@ -4,6 +4,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -155,6 +163,7 @@ fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier,
     val (c1, c2) = Brand.vivid(title)
     Column(
         modifier
+            .height(TileHeight)
             .graphicsLayer { scaleX = sc; scaleY = sc; alpha = if (enabled) 1f else 0.45f; shadowElevation = 8f; this.shape = shape; clip = true }
             .clip(shape)
             .background(if (accent) Brush.linearGradient(listOf(c1, c2)) else Brush.linearGradient(listOf(lerp(Brand.Card, c1, 0.16f), Brand.Card, lerp(Brand.Card, c2, 0.08f))))
@@ -165,8 +174,8 @@ fun Tile(ic: Ic, title: String, sub: String = "", modifier: Modifier = Modifier,
     ) {
         if (accent) Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color.White.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) { AppIcon(ic, size = 22.dp, color = Color.White) }
         else IconChip(ic, title)
-        Text(title, color = if (accent) Color.White else Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        if (sub.isNotEmpty()) Text(sub, color = if (accent) Color.White.copy(alpha = 0.85f) else Brand.TextSecondary, fontSize = 12.sp, maxLines = 2)
+        Text(title, color = if (accent) Color.White else Brand.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (sub.isNotEmpty()) Text(sub, color = if (accent) Color.White.copy(alpha = 0.85f) else Brand.TextSecondary, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }
 
@@ -260,7 +269,7 @@ fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Doub
     val track = Brand.Track
     val dim = Brand.TextSecondary
     Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(lerp(Brand.Card, zone, 0.06f), Brand.Card)))
+        modifier.height(CardHeight).clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(lerp(Brand.Card, zone, 0.06f), Brand.Card)))
             .border(1.dp, lerp(Brand.CardBorder, zone, 0.25f), RoundedCornerShape(16.dp)).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -297,7 +306,8 @@ fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Doub
                 Text(unit, color = Brand.TextSecondary, fontSize = 12.sp)
             }
         }
-        if (hist.size >= 3) Canvas(Modifier.fillMaxWidth().height(22.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(22.dp)) {
+            if (hist.size < 3) return@Canvas
             val lo2 = hist.min(); val hi2 = hist.max(); val rng = if (hi2 - lo2 < 1e-6) 1.0 else hi2 - lo2
             val p = Path()
             hist.forEachIndexed { i, v ->
@@ -307,9 +317,83 @@ fun GaugeCard(name: String, value: Double?, unit: String, min: Double, max: Doub
             }
             drawPath(p, zone.copy(alpha = 0.8f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
         }
-        Text(name, color = Brand.TextSecondary, fontSize = 12.sp, textAlign = TextAlign.Center)
-        if (lo != null && hi != null && hi!! > lo!!) Text("min ${String.format(Locale.US, "%.${decimals}f", lo)} · max ${String.format(Locale.US, "%.${decimals}f", hi)}", color = Brand.TextSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
-        if (hint.isNotEmpty()) Text(hint, color = Brand.TextSecondary.copy(alpha = 0.7f), fontSize = 10.sp, textAlign = TextAlign.Center)
+        Text(name, color = Brand.TextSecondary, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        Text(if (lo != null && hi != null && hi!! > lo!!) "min ${String.format(Locale.US, "%.${decimals}f", lo)} · max ${String.format(Locale.US, "%.${decimals}f", hi)}" else hint, color = Brand.TextSecondary.copy(alpha = 0.8f), fontSize = 10.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+/** Every live card and tile has this height, so grids line up. */
+val CardHeight = 196.dp
+val TileHeight = 138.dp
+
+/** Live card for the gear: P, R, N, D1–D6, M1–M6. */
+@Composable
+fun GearCard(label: String, modifier: Modifier = Modifier) {
+    val col = when { label.startsWith("R") -> Brand.Amber; label.startsWith("D") || label.startsWith("M") -> Brand.vivid("Gear").first; label == "N" -> Brand.TextPrimary; else -> Brand.TextSecondary }
+    Column(
+        modifier.height(CardHeight).clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(lerp(Brand.Card, col, 0.10f), Brand.Card)))
+            .border(1.dp, lerp(Brand.CardBorder, col, 0.35f), RoundedCornerShape(16.dp)).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (g in listOf("P", "R", "N", "D", "M")) {
+                val on = label.startsWith(g)
+                Text(g, color = if (on) col else Brand.TextSecondary.copy(alpha = 0.45f), fontSize = 13.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        AnimatedContent(targetState = label, transitionSpec = { (slideInVertically { it / 2 } + fadeIn()) togetherWith (slideOutVertically { -it / 2 } + fadeOut()) }, label = "gear") { t ->
+            Text(t, color = col, fontSize = 58.sp, fontWeight = FontWeight.Black)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("Gear", color = Brand.TextSecondary, fontSize = 12.sp)
+    }
+}
+
+/**
+ * Two-column grid of equal cards. Hold a card, drag it over another place, let go: [onMove] gets (from, to).
+ * Equal sizes make the target place a simple sum of the drag distance.
+ */
+@Composable
+fun <T> ReorderGrid(items: List<T>, onMove: (Int, Int) -> Unit, card: @Composable (T, Modifier) -> Unit) {
+    val gap = 10.dp
+    var dragIdx by remember { mutableStateOf(-1) }
+    var dx by remember { mutableStateOf(0f) }
+    var dy by remember { mutableStateOf(0f) }
+    var cellW by remember { mutableStateOf(1f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val stepY = with(density) { (CardHeight + gap).toPx() }
+    val haptic = LocalHapticFeedback.current
+    fun target(i: Int): Int {
+        val col = (i % 2 + Math.round(dx / (cellW + with(density) { gap.toPx() }))).coerceIn(0, 1)
+        val row = (i / 2 + Math.round(dy / stepY)).coerceAtLeast(0)
+        return (row * 2 + col).coerceIn(0, items.size - 1)
+    }
+    val currentItems by androidx.compose.runtime.rememberUpdatedState(items)
+    Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+        for ((r, row) in items.chunked(2).withIndex()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                for ((c, item) in row.withIndex()) {
+                    val i = r * 2 + c
+                    val dragging = i == dragIdx
+                    val lift by animateFloatAsState(if (dragging) 1.05f else 1f, label = "lift")
+                    val key = item
+                    card(item, Modifier.weight(1f)
+                        .onSizeChanged { cellW = it.width.toFloat() }
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer { if (dragging) { translationX = dx; translationY = dy }; scaleX = lift; scaleY = lift; shadowElevation = if (dragging) 24f else 0f }
+                        .pointerInput(key) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { dragIdx = currentItems.indexOf(key); dx = 0f; dy = 0f; haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                                onDrag = { ch, d -> ch.consume(); dx += d.x; dy += d.y },
+                                onDragEnd = { val from = dragIdx; if (from >= 0) { val to = target(from); if (to != from) onMove(from, to) }; dragIdx = -1; dx = 0f; dy = 0f },
+                                onDragCancel = { dragIdx = -1; dx = 0f; dy = 0f },
+                            )
+                        })
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
     }
 }
 

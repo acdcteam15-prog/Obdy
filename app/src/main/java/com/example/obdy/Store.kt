@@ -63,7 +63,12 @@ class Store(private val ctx: Context) {
     var fuelCal: Double get() = (prefs.getString("fuelCal", "1.0") ?: "1.0").toDoubleOrNull() ?: 1.0; set(v) { prefs.edit().putString("fuelCal", v.toString()).apply() }
     var symptoms: String get() = prefs.getString("symptoms", "") ?: ""; set(v) { prefs.edit().putString("symptoms", v).apply() }
     var livePids: List<Int>
-        get() = (prefs.getString("livePids", null) ?: Pids.defaultLive.joinToString(",")).split(",").mapNotNull { it.trim().toIntOrNull() }
+        get() {
+            val l = (prefs.getString("livePids", null) ?: Pids.defaultLive.joinToString(",")).split(",").mapNotNull { it.trim().toIntOrNull() }
+            // 1.16: the gear card is new; put it first once for existing users.
+            if (!prefs.getBoolean("gearCardAdded", false)) { prefs.edit().putBoolean("gearCardAdded", true).apply(); if (Gm.GEAR_ID !in l) return listOf(Gm.GEAR_ID) + l }
+            return l
+        }
         set(v) { prefs.edit().putString("livePids", v.joinToString(",")).apply() }
 
     private fun readJson(name: String): JSONArray = try { JSONArray(file(name).readText()) } catch (e: Exception) { JSONArray() }

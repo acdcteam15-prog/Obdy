@@ -401,15 +401,16 @@ fun LiveScreen(vm: ObdyVm) {
                 if (vm.car.fuelPrice > 0) Label("Cost so far: ${Calc.fmt(vm.tripLiters * vm.car.fuelPrice, 2)}", size = 13)
                 if (!vm.supported.contains(0x10) && !vm.supported.contains(0x5E) && vm.supported.isNotEmpty()) Hint("This car reports neither air flow nor fuel rate, so fuel use cannot be calculated.")
             }
-            val pids = vm.liveSel.mapNotNull { Pids.byId(it) }
-            if (pids.isEmpty()) Hint("Tap Choose values to pick what to watch.")
-            for (row in pids.chunked(2)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (p in row) GaugeCard(p.name, vm.liveValues[p.id], p.unit, p.min, p.max, Modifier.weight(1f), decimals = if (p.max <= 10) 2 else if (p.max <= 200) 1 else 0, hint = p.hint)
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
+            val ids = vm.liveSel.filter { Pids.byId(it) != null || it == Gm.GEAR_ID || it == Gm.TFT_ID }
+            if (ids.isEmpty()) Hint("Tap Choose values to pick what to watch.")
+            else Hint("Hold a card and drag to move it.")
+            ReorderGrid(ids, onMove = { a, b -> vm.moveLive(vm.liveSel.indexOf(ids[a]), vm.liveSel.indexOf(ids[b])) }) { id, m ->
+                when (id) {
+                    Gm.GEAR_ID -> GearCard(Gm.gearLabel(vm.gearLever, vm.gearNow), m)
+                    Gm.TFT_ID -> GaugeCard("Gearbox fluid (GM)", vm.extValues["Transmission fluid temp (GM)"], "°C", 20.0, 130.0, m)
+                    else -> { val p = Pids.byId(id)!!; GaugeCard(p.name, vm.liveValues[p.id], p.unit, p.min, p.max, m, decimals = if (p.max <= 10) 2 else if (p.max <= 200) 1 else 0, hint = p.hint) }
                 }
             }
-            if (vm.showExt) GearboxLiveCard(vm)
         }
     }
     if (pick) {
@@ -420,6 +421,12 @@ fun LiveScreen(vm: ObdyVm) {
             text = {
                 Column(Modifier.height(380.dp).verticalScroll(rememberScrollState())) {
                     val list = Pids.all.filter { vm.supported.isEmpty() || it.id in vm.supported }
+                    for ((gid, gname) in listOf(Gm.GEAR_ID to "Gear (P R N D1–D6)", Gm.TFT_ID to "Gearbox fluid temperature (°C)")) {
+                        Row(Modifier.fillMaxWidth().clickable { vm.toggleLive(gid) }, verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = gid in vm.liveSel, onCheckedChange = { vm.toggleLive(gid) })
+                            Text(gname, fontSize = 14.sp)
+                        }
+                    }
                     for (p in list) {
                         Row(Modifier.fillMaxWidth().clickable { vm.toggleLive(p.id) }, verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = p.id in vm.liveSel, onCheckedChange = { vm.toggleLive(p.id) })
@@ -854,19 +861,6 @@ private fun HealthDashboard(vm: ObdyVm) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { for (f in h.factors) Hint("${f.name}: ${f.text}") }
         }
         if (!open) Hint(if (vm.lastScanMs > 0) "Last scan ${fmtDate(vm.lastScanMs)} · tap for details" else "Tap for details")
-    }
-}
-
-@Composable
-private fun GearboxLiveCard(vm: ObdyVm) {
-    val tft = vm.extValues["Transmission fluid temp (GM)"]
-    if (tft == null) { Hint("GM extra value (gearbox temperature): waiting for the car..."); return }
-    Panel {
-        Title("Gearbox (GM value)")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BigStat("Fluid", tft?.let { Calc.fmt(it, 0) + " °C" } ?: "--", tft?.let { if (it >= 115) Brand.Red else if (it >= 100) Brand.Amber else Brand.Green } ?: Brand.TextSecondary, Modifier.weight(1f))
-        }
-        Hint("Gearbox fluid: normal 70–95 °C, over 110 °C when working hard is too hot (slow down, avoid kick-down).")
     }
 }
 

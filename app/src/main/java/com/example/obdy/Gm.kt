@@ -93,6 +93,19 @@ object Gm {
         return probes().firstOrNull { it.resp == h }?.name ?: if (h.isEmpty()) "Engine / transmission" else "Module $h"
     }
 
+    /** Live screen cards that are not standard PIDs (ids above 0xFF never go to the car as Mode 01). */
+    const val GEAR_ID = 0x1001
+    const val TFT_ID = 0x1002
+    val leverPid = ExtPid("Lever (GM)", "", "7E2", "22194F", 1, { it[0].toDouble() }, 0.0, 15.0)
+    /** TCM 199A: answered 01 in P (2026-11-19). Read as the gear the gearbox is in; confirm with a drive log. */
+    val gearPid = ExtPid("Gear (GM)", "", "7E2", "22199A", 1, { it[0].toDouble() }, 0.0, 9.0)
+    fun gearLabel(lever: Int?, gear: Int?): String = when (lever) {
+        null -> "--"; 0x01 -> "P"; 0x02 -> "R"; 0x04 -> "N"; 0x00 -> "·"
+        0x06 -> if (gear != null && gear in 1..6) "D$gear" else "D"
+        0x08 -> if (gear != null && gear in 1..6) "M$gear" else "M"
+        else -> "%02X".format(lever)
+    }
+
     val extPids: List<ExtPid> = listOf(
         ExtPid("Transmission fluid temp (GM)", "°C", "7E2", "221940", 1, { it[0] - 40.0 }, -40.0, 160.0),
     )

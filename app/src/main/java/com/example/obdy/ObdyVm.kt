@@ -386,9 +386,20 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private val liveReasons = HashSet<String>()
     private val dead = HashMap<Int, Int>()
 
+    var gearLever by mutableStateOf<Int?>(null)
+    var gearNow by mutableStateOf<Int?>(null)
+
     fun toggleLive(id: Int) {
         liveSel = if (id in liveSel) liveSel - id else liveSel + id
         store.livePids = liveSel
+    }
+
+    /** Long-press drag on the Live screen: moves one card to a new place and remembers the order. */
+    fun moveLive(from: Int, to: Int) {
+        if (from == to || from !in liveSel.indices) return
+        val l = liveSel.toMutableList(); val x = l.removeAt(from); l.add(to.coerceIn(0, l.size), x)
+        liveSel = l; store.livePids = l
+        AppLog.i("[YOU] moved live card ${x} from ${from + 1} to ${to.coerceIn(0, l.size - 1) + 1}")
     }
 
     fun wantLive(reason: String, on: Boolean) {
@@ -468,6 +479,13 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (0x42 in ids && (volt42Bad || (dead[0x42] ?: 0) >= 3) && cycle % 4 == 0) {
                         c.exclusive { voltage() }?.let { liveValues[0x42] = it }
                     }
+                    if (showExt && Gm.GEAR_ID in liveSel && cycle % 2 == 0 && ((dead[-0x1001] ?: 0) < 5 || cycle % 32 == 0)) {   // lever + gear from the TCM (about 70 ms each)
+                        val lv = c.exclusive { readExt(Gm.leverPid) }?.toInt()
+                        val gr = if (lv == 0x06 || lv == 0x08) c.exclusive { readExt(Gm.gearPid) }?.toInt() else null
+                        if (lv == null) dead[-0x1001] = (dead[-0x1001] ?: 0) + 1 else dead[-0x1001] = 0
+                        gearLever = lv; gearNow = gr
+                        AppLog.i("[VALUE] Gear=${Gm.gearLabel(lv, gr)} (lever ${lv?.let { "%02X".format(it) } ?: "-"}, gear ${gr?.let { "%02X".format(it) } ?: "-"})")
+                    }
                     if (showExt && cycle % 16 == 0) {      // the gearbox value is a request to the TCM: ask rarely, not every second
                         for (e in Gm.extPids) {
                             if ((dead[-e.name.hashCode()] ?: 0) >= 3 && cycle % 32 != 0) continue
@@ -538,7 +556,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (liveReasons.contains("dash") || liveReasons.contains("drive")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
         if (flightOn) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x06, 0x07, 0x04, 0x11, 0x10))
         // A value that failed 3 times is only retried every 8th round (it used to be dropped until you reconnected).
-        return want.distinct().filter { (supported.isEmpty() || it in supported) && ((dead[it] ?: 0) < 3 || cycle % 8 == 0) }
+        return want.distinct().filter { it in 0..0xFF && (supported.isEmpty() || it in supported) && ((dead[it] ?: 0) < 3 || cycle % 8 == 0) }
     }
 
     // ---- trip and fuel
