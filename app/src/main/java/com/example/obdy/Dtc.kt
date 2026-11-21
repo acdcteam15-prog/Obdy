@@ -117,6 +117,7 @@ object DtcDb {
     }
 
     private val names = mapOf(
+        "P0010" to "Intake camshaft position actuator (VVT solenoid) circuit (bank 1)",
         "P0011" to "Intake camshaft position over-advanced (bank 1)", "P0012" to "Intake camshaft position over-retarded (bank 1)",
         "P0013" to "Exhaust camshaft position actuator circuit (bank 1)", "P0014" to "Exhaust camshaft position over-advanced (bank 1)",
         "P0016" to "Crankshaft and camshaft position correlation (bank 1 sensor A)", "P0017" to "Crankshaft and camshaft position correlation (bank 1 sensor B)",
@@ -589,6 +590,7 @@ object DtcDb {
             c == "P0441" || c == "P0446" || c == "P0443" -> listOf("EVAP purge or vent valve stuck/failed", "Blocked or cracked EVAP hose", "Wiring or connector of the valve")
             c == "P0128" -> listOf("Thermostat stuck open", "Coolant temperature sensor reading wrong", "Low coolant level")
             c == "P0117" || c == "P0118" || c == "P0116" -> listOf("Coolant temperature sensor or its connector", "Wiring short/open", "Real overheating or low coolant (check level first)")
+            c == "P0010" || c == "P0013" -> listOf("Camshaft (VVT) solenoid connector loose, oily or corroded (check first)", "VVT solenoid coil open or shorted", "Wiring between solenoid and engine computer", "Low oil level (check)")
             c in setOf("P0011", "P0012", "P0013", "P0014", "P0016", "P0017") -> listOf("Low oil level or old/wrong-grade oil (check first)", "Camshaft position (VVT) solenoid or actuator", "Stretched timing chain on high-mileage engines", "Crank/cam sensor signal")
             c in setOf("P0101", "P0102", "P0103") -> listOf("Dirty or damaged MAF sensor", "Air leak after the MAF (loose intake tube/air filter box)", "Connector or wiring problem")
             c in setOf("P0106", "P0107", "P0108") -> listOf("MAP sensor or its connector", "Vacuum leak", "Wiring short/open")
