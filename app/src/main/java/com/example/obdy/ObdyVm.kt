@@ -386,6 +386,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private val liveReasons = HashSet<String>()
     private val dead = HashMap<Int, Int>()
 
+    private val gearLog = GearLog()
     var gearLever by mutableStateOf<Int?>(null)
     var gearNow by mutableStateOf<Int?>(null)
 
@@ -485,6 +486,11 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         if (lv == null) dead[-0x1001] = (dead[-0x1001] ?: 0) + 1 else dead[-0x1001] = 0
                         gearLever = lv; gearNow = gr
                         AppLog.i("[VALUE] Gear=${Gm.gearLabel(lv, gr)} (lever ${lv?.let { "%02X".format(it) } ?: "-"}, gear ${gr?.let { "%02X".format(it) } ?: "-"})")
+                        if (lv != null) for (line in gearLog.add(GearLog.Sample(System.currentTimeMillis(), lv, gr, liveValues[0x0C], liveValues[0x0D], liveValues[0x11], liveValues[0x04], extValues["Transmission fluid temp (GM)"]))) AppLog.i(line)
+                    }
+                    if (showExt && Gm.GEAR_ID in liveSel && cycle % 64 == 8) {   // two more gearbox values, meaning not yet known: logged raw so a drive log can reveal them
+                        val a = c.exclusive { readExt(Gm.tcmRaw1941) }; val b = c.exclusive { readExt(Gm.tcmRaw1942) }
+                        AppLog.i("[GEARBOX RAW] 221941=${a?.toInt() ?: "-"} 221942=${b?.toInt() ?: "-"} rpm=${liveValues[0x0C]?.toInt() ?: "-"} kmh=${liveValues[0x0D]?.toInt() ?: "-"}")
                     }
                     if (showExt && cycle % 16 == 0) {      // the gearbox value is a request to the TCM: ask rarely, not every second
                         for (e in Gm.extPids) {
@@ -498,7 +504,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (dt > 20.0) {
                         // The app was frozen (screen locked, background): what is on screen is old, and a trip must not count the gap as driving.
                         AppLog.i("[APP] live data was paused ${dt.toInt()} s: old values dropped, waiting for fresh readings", true)
-                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear()
+                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear(); gearLog.reset()
                         ectGuard.reset(); ectNote = null; lowChargeSec = 0.0
                         say("Live data was paused for ${dt.toInt() / 60} min. Old values were cleared; fresh readings follow.")
                         dt = 0.0
@@ -552,6 +558,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun pollIds(cycle: Int = 0): List<Int> {
         val want = ArrayList<Int>(liveSel)
         if (tripAcc != null) want.addAll(listOf(0x0D, 0x10, 0x44, 0x5E))
+        if (showExt && Gm.GEAR_ID in liveSel) want.addAll(listOf(0x0C, 0x0D, 0x11, 0x04))   // the gearbox log needs rpm, speed, throttle, load
         // Driving mode needs these whatever is picked on Live (it asked as "drive" but only "dash" was handled).
         if (liveReasons.contains("dash") || liveReasons.contains("drive")) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x04))
         if (flightOn) want.addAll(listOf(0x0C, 0x0D, 0x05, 0x42, 0x06, 0x07, 0x04, 0x11, 0x10))

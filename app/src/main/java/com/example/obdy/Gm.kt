@@ -99,6 +99,8 @@ object Gm {
     val leverPid = ExtPid("Lever (GM)", "", "7E2", "22194F", 1, { it[0].toDouble() }, 0.0, 15.0)
     /** TCM 199A: answered 01 in P (2026-11-19). Read as the gear the gearbox is in; confirm with a drive log. */
     val gearPid = ExtPid("Gear (GM)", "", "7E2", "22199A", 1, { it[0].toDouble() }, 0.0, 9.0)
+    val tcmRaw1941 = ExtPid("TCM 1941", "", "7E2", "221941", 2, { it[0] * 256.0 + it[1] }, 0.0, 65535.0)
+    val tcmRaw1942 = ExtPid("TCM 1942", "", "7E2", "221942", 2, { it[0] * 256.0 + it[1] }, 0.0, 65535.0)
     fun gearLabel(lever: Int?, gear: Int?): String = when (lever) {
         null -> "--"; 0x01 -> "P"; 0x02 -> "R"; 0x04 -> "N"; 0x00 -> "·"
         0x06 -> if (gear != null && gear in 1..6) "D$gear" else "D"
