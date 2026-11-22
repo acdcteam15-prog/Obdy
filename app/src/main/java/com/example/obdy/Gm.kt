@@ -102,8 +102,8 @@ object Gm {
     /** TCM turbine (input) and output shaft speed, rpm. Confirmed on the 11-22 drive: raw/8 = rpm (input = engine rpm when locked, 6th = 0.747 x output). */
     val turbinePid = ExtPid("TCM turbine", "rpm", "7E2", "221941", 2, { (it[0] * 256.0 + it[1]) / 8.0 }, 0.0, 8000.0)
     val outputPid = ExtPid("TCM output", "rpm", "7E2", "221942", 2, { (it[0] * 256.0 + it[1]) / 8.0 }, 0.0, 8000.0)
-    /** Input/output ratio of gears 1..6, measured on this car (D2-D6) and the 6T40/45 table for 1st. */
-    val GEAR_RATIO = doubleArrayOf(4.58, 2.95, 1.93, 1.42, 1.0, 0.747)
+    /** Input/output ratio of gears 1..6. The 6T40/45 table; the 11-22 drive measured D2-D6 within 1% of it and D1 within 1-3%. */
+    val GEAR_RATIO = doubleArrayOf(4.584, 2.964, 1.912, 1.446, 1.0, 0.746)
     fun gearLabel(lever: Int?, gear: Int?): String = when (lever) {
         null -> "--"; 0x01 -> "P"; 0x02 -> "R"; 0x04 -> "N"; 0x00 -> "·"
         0x06 -> if (gear != null && gear in 1..6) "D$gear" else "D"

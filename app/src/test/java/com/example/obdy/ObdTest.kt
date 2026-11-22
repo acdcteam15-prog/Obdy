@@ -542,7 +542,7 @@ class InsightsTest {
     @Test fun gearLogWritesSampleWithRatio() {
         val g = GearLog()
         val a = g.add(gs(0, 6, 2250.0, 3015.0))
-        assertTrue(a[0].startsWith("[GEARBOX] D6") && a[0].contains("ratio=0.746") && a[0].contains("dev=-0.1"))
+        assertTrue(a[0].startsWith("[GEARBOX] D6") && a[0].contains("ratio=0.746") && a[0].contains("dev=0.0"))
     }
 
     @Test fun gearLogShiftLine() {
@@ -573,6 +573,14 @@ class InsightsTest {
         g.add(gs(1500, 6, 2250.0, 3015.0, rpm = 2500.0))                  // engine jumped: not steady yet
         g.add(gs(3000, 6, 2250.0, 3015.0, rpm = 2500.0))
         assertTrue(g.add(gs(4500, 6, 2250.0, 3015.0, rpm = 2500.0)).any { it.contains("converter") })
+    }
+
+    @Test fun gearLogOffByOneGearIsLabelLagNotSlip() {
+        val g = GearLog()
+        g.add(gs(0, 1, 1300.0, 290.0, rpm = 1300.0))
+        assertTrue(g.add(gs(1500, 1, 1310.0, 442.0, rpm = 1300.0)).none { it.startsWith("[SLIP?]") })   // ratio 2.96 = second gear
+        assertTrue(g.add(gs(3000, 1, 1310.0, 442.0, rpm = 1300.0)).none { it.startsWith("[SLIP?]") })
+        assertNull(g.summary())
     }
 
     @Test fun gearLogSummary() {
