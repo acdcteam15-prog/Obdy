@@ -537,28 +537,49 @@ class InsightsTest {
         assertTrue(c.isNotEmpty())
     }
 
-    private fun gs(t: Long, gear: Int?, rpm: Double, kmh: Double, thr: Double = 20.0, lever: Int = 0x06) = GearLog.Sample(t, lever, gear, rpm, kmh, thr, 30.0, 80.0)
+    private fun gs(t: Long, gear: Int?, turb: Double, out: Double, rpm: Double = turb, lever: Int = 0x06) = GearLog.Sample(t, lever, gear, rpm, out / 40, 30.0, 80.0, turb, out)
 
-    @Test fun gearLogWritesSampleAndShift() {
+    @Test fun gearLogWritesSampleWithRatio() {
         val g = GearLog()
-        val a = g.add(gs(0, 2, 2600.0, 40.0))
-        assertTrue(a[0].startsWith("[GEARBOX] D2"))
-        val b = g.add(gs(2000, 3, 1700.0, 42.0))
+        val a = g.add(gs(0, 6, 2250.0, 3015.0))
+        assertTrue(a[0].startsWith("[GEARBOX] D6") && a[0].contains("ratio=0.746") && a[0].contains("dev=-0.1"))
+    }
+
+    @Test fun gearLogShiftLine() {
+        val g = GearLog()
+        g.add(gs(0, 2, 2600.0, 880.0))
+        val b = g.add(gs(2000, 3, 1700.0, 880.0))
         assertTrue(b.any { it.startsWith("[SHIFT] D2->D3 up") && it.contains("2.0 s in D2") })
     }
 
-    @Test fun gearLogFlagsSlipOnlyAfterTwoHighSamples() {
+    @Test fun gearLogClutchSlipNeedsTwoSteadySamples() {
         val g = GearLog()
-        for (i in 0 until 12) g.add(gs(i * 500L, 3, 1800.0, 60.0))      // usual ratio 30
-        assertTrue(g.add(gs(7000, 3, 2300.0, 60.0)).none { it.startsWith("[SLIP?]") })
-        assertTrue(g.add(gs(7500, 3, 2300.0, 60.0)).any { it.startsWith("[SLIP?] D3") })
+        g.add(gs(0, 3, 1930.0, 1000.0, rpm = 2000.0))
+        val x = g.add(gs(1500, 3, 2400.0, 1000.0, rpm = 2000.0))          // 2.4 = +24% off 1.93
+        assertTrue(x.none { it.startsWith("[SLIP?]") })
+        assertTrue(g.add(gs(3000, 3, 2400.0, 1000.0, rpm = 2000.0)).any { it.startsWith("[SLIP?] D3 clutch") })
     }
 
-    @Test fun gearLogNoSlipWhenCoasting() {
+    @Test fun gearLogNoSlipWhileSpeedChanges() {
         val g = GearLog()
-        for (i in 0 until 12) g.add(gs(i * 500L, 3, 1800.0, 60.0))
-        g.add(gs(7000, 3, 2300.0, 60.0, thr = 0.0))
-        assertTrue(g.add(gs(7500, 3, 2300.0, 60.0, thr = 0.0)).none { it.startsWith("[SLIP?]") })
+        g.add(gs(0, 3, 1930.0, 1000.0))
+        assertTrue(g.add(gs(1500, 3, 2900.0, 1200.0)).none { it.startsWith("[SLIP?]") })
+        assertTrue(g.add(gs(3000, 3, 3200.0, 1330.0)).none { it.startsWith("[SLIP?]") })
+    }
+
+    @Test fun gearLogConverterSlipInSixth() {
+        val g = GearLog()
+        g.add(gs(0, 6, 2250.0, 3015.0, rpm = 2250.0))
+        g.add(gs(1500, 6, 2250.0, 3015.0, rpm = 2500.0))                  // engine jumped: not steady yet
+        g.add(gs(3000, 6, 2250.0, 3015.0, rpm = 2500.0))
+        assertTrue(g.add(gs(4500, 6, 2250.0, 3015.0, rpm = 2500.0)).any { it.contains("converter") })
+    }
+
+    @Test fun gearLogSummary() {
+        val g = GearLog()
+        assertNull(g.summary())
+        g.add(gs(0, 6, 2250.0, 3015.0)); g.add(gs(1500, 6, 2250.0, 3015.0))
+        assertTrue(g.summary()!!.contains("D6 n=1"))
     }
 
     @Test fun gearLabels() {

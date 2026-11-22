@@ -99,8 +99,11 @@ object Gm {
     val leverPid = ExtPid("Lever (GM)", "", "7E2", "22194F", 1, { it[0].toDouble() }, 0.0, 15.0)
     /** TCM 199A: answered 01 in P (2026-11-19). Read as the gear the gearbox is in; confirm with a drive log. */
     val gearPid = ExtPid("Gear (GM)", "", "7E2", "22199A", 1, { it[0].toDouble() }, 0.0, 9.0)
-    val tcmRaw1941 = ExtPid("TCM 1941", "", "7E2", "221941", 2, { it[0] * 256.0 + it[1] }, 0.0, 65535.0)
-    val tcmRaw1942 = ExtPid("TCM 1942", "", "7E2", "221942", 2, { it[0] * 256.0 + it[1] }, 0.0, 65535.0)
+    /** TCM turbine (input) and output shaft speed, rpm. Confirmed on the 11-22 drive: raw/8 = rpm (input = engine rpm when locked, 6th = 0.747 x output). */
+    val turbinePid = ExtPid("TCM turbine", "rpm", "7E2", "221941", 2, { (it[0] * 256.0 + it[1]) / 8.0 }, 0.0, 8000.0)
+    val outputPid = ExtPid("TCM output", "rpm", "7E2", "221942", 2, { (it[0] * 256.0 + it[1]) / 8.0 }, 0.0, 8000.0)
+    /** Input/output ratio of gears 1..6, measured on this car (D2-D6) and the 6T40/45 table for 1st. */
+    val GEAR_RATIO = doubleArrayOf(4.58, 2.95, 1.93, 1.42, 1.0, 0.747)
     fun gearLabel(lever: Int?, gear: Int?): String = when (lever) {
         null -> "--"; 0x01 -> "P"; 0x02 -> "R"; 0x04 -> "N"; 0x00 -> "·"
         0x06 -> if (gear != null && gear in 1..6) "D$gear" else "D"

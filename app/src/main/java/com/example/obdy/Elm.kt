@@ -439,6 +439,21 @@ class ElmClient(private val transport: Transport) {
         }
     }
 
+    /** TCM turbine and output shaft speed (rpm), one header switch for both. Null parts = no answer. */
+    suspend fun readShafts(): Pair<Double?, Double?> {
+        try {
+            at("ATSH${Gm.turbinePid.header}")
+            suspend fun get(e: ExtPid): Double? {
+                val r = query(e.request, 1200)
+                val f = r.frames.firstOrNull { it.u(0) == 0x62 } ?: return null
+                return if (f.data.size < 5) null else e.decode(IntArray(2) { f.u(3 + it) })
+            }
+            return get(Gm.turbinePid) to get(Gm.outputPid)
+        } finally {
+            try { at("ATSH7DF") } catch (_: Exception) {}
+        }
+    }
+
     /** A manufacturer value (Mode 22). Null if that module does not know it. */
     suspend fun readExt(e: ExtPid): Double? {
         try {
