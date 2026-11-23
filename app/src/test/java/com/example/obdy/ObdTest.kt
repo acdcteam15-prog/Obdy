@@ -594,4 +594,36 @@ class InsightsTest {
         assertEquals("P", Gm.gearLabel(0x01, null)); assertEquals("N", Gm.gearLabel(0x04, 3))
         assertEquals("D4", Gm.gearLabel(0x06, 4)); assertEquals("M2", Gm.gearLabel(0x08, 2)); assertEquals("D", Gm.gearLabel(0x06, 9))
     }
+
+    /** Downshift 3->2 at about 19 km/h (output 600 rpm), one sample every 220 ms, gear byte changes at sample 5. */
+    private fun capture(turb: (Int) -> Double, out: (Int) -> Double): List<String> {
+        val c = ShiftCapture(); val lines = ArrayList<String>()
+        for (i in 0..13) lines.addAll(c.add(ShiftCapture.S(i * 220L, if (i < 5) 3 else 2, turb(i), out(i), 60.0)))
+        return lines
+    }
+    private fun smoothTurb(i: Int) = when { i < 4 -> 1147.0; i == 4 -> 1450.0; i == 5 -> 1700.0; else -> 1778.0 }
+
+    @Test fun shiftCaptureSmoothDownshift() {
+        val l = capture(::smoothTurb) { 600.0 }
+        val s = l.first { it.startsWith("[SHIFT-FAST]") }
+        assertTrue(s.contains("D3->D2 down") && s.contains("dur<=660 ms") && s.contains("flare=0.0%") && s.contains("tie=0.0%"))
+        assertTrue(l.none { it.startsWith("[SHOCK?]") })
+    }
+
+    @Test fun shiftCaptureFlagsJolt() {
+        val l = capture(::smoothTurb) { i -> if (i >= 3) 640.0 else 600.0 }      // +40 rpm in 0.22 s = 1.6 m/s2
+        assertTrue(l.any { it.startsWith("[SHOCK?] D3->D2") })
+    }
+
+    @Test fun shiftCaptureFlagsFlare() {
+        val l = capture({ i -> if (i == 5) 3300.0 else smoothTurb(i) }) { 600.0 }   // ratio 5.5, far above both gears
+        assertTrue(l.first { it.startsWith("[SHIFT-FAST]") }.contains("flare=85."))
+    }
+
+    @Test fun shiftCaptureSkipsWhenTooFewSamples() {
+        val c = ShiftCapture()
+        c.add(ShiftCapture.S(0, 3, 1147.0, 600.0)); c.add(ShiftCapture.S(300, 2, 1778.0, 600.0))
+        val l = c.add(ShiftCapture.S(1600, 2, 1778.0, 600.0))
+        assertTrue(l.single().contains("skipped"))
+    }
 }

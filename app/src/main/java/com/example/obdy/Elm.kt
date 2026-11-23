@@ -454,6 +454,33 @@ class ElmClient(private val transport: Transport) {
         }
     }
 
+    private suspend fun ext1(e: ExtPid): Double? {
+        val r = query(e.request, 800)
+        val want = e.request.substring(0, 2).toInt(16)
+        val f = r.frames.firstOrNull { it.u(0) == want + 0x40 } ?: return null
+        if (f.data.size < 3 + e.bytes) return null
+        return e.decode(IntArray(e.bytes) { f.u(3 + it) })
+    }
+
+    /**
+     * Fast gearbox capture for shift analysis: gear, turbine and output shaft speed about every 0.22 s, header set once.
+     * [onSample] gets (time, gear, turbine rpm, output rpm) and returns false to stop. Stops after [maxMs] or 3 empty rounds.
+     */
+    suspend fun gearBurst(maxMs: Long, onSample: (Long, Int?, Double?, Double?) -> Boolean) {
+        try {
+            at("ATSH7E2")
+            val end = System.currentTimeMillis() + maxMs
+            var misses = 0
+            while (System.currentTimeMillis() < end) {
+                val g = ext1(Gm.gearPid); val t = ext1(Gm.turbinePid); val o = ext1(Gm.outputPid)
+                if (g == null && t == null && o == null) { misses++; if (misses >= 3) break } else misses = 0
+                if (!onSample(System.currentTimeMillis(), g?.toInt(), t, o)) break
+            }
+        } finally {
+            try { at("ATSH7DF") } catch (_: Exception) {}
+        }
+    }
+
     /** A manufacturer value (Mode 22). Null if that module does not know it. */
     suspend fun readExt(e: ExtPid): Double? {
         try {

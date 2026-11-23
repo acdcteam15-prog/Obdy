@@ -387,6 +387,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private val dead = HashMap<Int, Int>()
 
     private val gearLog = GearLog()
+    private val shiftCap = ShiftCapture()
     var gearLever by mutableStateOf<Int?>(null)
     var gearNow by mutableStateOf<Int?>(null)
 
@@ -488,7 +489,18 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         AppLog.i("[VALUE] Gear=${Gm.gearLabel(lv, gr)} (lever ${lv?.let { "%02X".format(it) } ?: "-"}, gear ${gr?.let { "%02X".format(it) } ?: "-"})")
                         val sh = if (lv == 0x06 || lv == 0x08) c.exclusive { readShafts() } else null
                         if (lv != null) for (line in gearLog.add(GearLog.Sample(System.currentTimeMillis(), lv, gr, liveValues[0x0C], liveValues[0x0D], liveValues[0x04], extValues["Transmission fluid temp (GM)"], sh?.first, sh?.second))) AppLog.i(line)
-                        if (cycle % 40 == 0) gearLog.summary()?.let { AppLog.i(it) }
+                        if (cycle % 40 == 0) { gearLog.summary()?.let { AppLog.i(it) }; shiftCap.summary()?.let { AppLog.i(it) } }
+                        // Slow driving in D (where the 3->2 and 2->1 downshifts happen): capture the shifts at about 4 samples per second.
+                        if ((lv == 0x06 || lv == 0x08) && (liveValues[0x0D] ?: 0.0) in 3.0..45.0) {
+                            val tftNow = extValues["Transmission fluid temp (GM)"]
+                            c.exclusive {
+                                gearBurst(1800) { t, g, tb, ou ->
+                                    AppLog.i("[GFAST] gear=${g ?: "-"} turb=${tb?.toInt() ?: "-"} outp=${ou?.toInt() ?: "-"}")
+                                    for (line in shiftCap.add(ShiftCapture.S(t, g, tb, ou, tftNow))) AppLog.i(line)
+                                    true
+                                }
+                            }
+                        }
                     }
                     if (showExt && cycle % 16 == 0) {      // the gearbox value is a request to the TCM: ask rarely, not every second
                         for (e in Gm.extPids) {
@@ -502,7 +514,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (dt > 20.0) {
                         // The app was frozen (screen locked, background): what is on screen is old, and a trip must not count the gap as driving.
                         AppLog.i("[APP] live data was paused ${dt.toInt()} s: old values dropped, waiting for fresh readings", true)
-                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear(); gearLog.reset()
+                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear(); gearLog.reset(); shiftCap.reset()
                         ectGuard.reset(); ectNote = null; lowChargeSec = 0.0
                         say("Live data was paused for ${dt.toInt() / 60} min. Old values were cleared; fresh readings follow.")
                         dt = 0.0
@@ -1899,7 +1911,9 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The "it is happening now" button. */
-    fun markSymptom(note: String) { if (saveSnapshot("Symptom: " + note.ifBlank { "marked by you" })) say("Saved the last minute of data") }
+    fun markSymptom(note: String) {
+        AppLog.i("[MARK] symptom now: ${note.ifBlank { "marked by you" }} | gear=${Gm.gearLabel(gearLever, gearNow)} " + liveValues.entries.sortedBy { it.key }.joinToString(" ") { "%02X=%s".format(it.key, Calc.fmt(it.value, 1)) })
+        if (saveSnapshot("Symptom: " + note.ifBlank { "marked by you" })) say("Saved the last minute of data") }
 
     // ------------------------------------------------------------------ fuel log
     var fuel by mutableStateOf(store.loadFuel())

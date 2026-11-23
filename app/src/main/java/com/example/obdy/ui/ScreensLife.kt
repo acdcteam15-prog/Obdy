@@ -101,7 +101,7 @@ fun SymptomButton(vm: ObdyVm, modifier: Modifier = Modifier) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Hint("Saves the last minute of live data as a recording, and a note in your history.")
-                    Field("What do you notice? (optional)", note, { note = it })
+                    Field("What do you notice? (e.g. A/C off message, shock 3 to 2)", note, { note = it })
                 }
             },
             confirmButton = { TextButton(onClick = { vm.markSymptom(note); open = false }) { Text("Save") } },
