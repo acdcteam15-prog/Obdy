@@ -68,7 +68,7 @@ class GearLog {
         } else if (pl == null) inGearSince = s.tMs
         if (dev != null && s.gear != null) {
             val st = stats.getOrPut(label) { Stat() }
-            // The gear byte and the shaft speeds are read ~0.1 s apart: right at a shift the byte can still show the old gear.
+            // The gear value is the gearbox's target gear and runs ~0.5 s ahead of the real shaft ratio during a shift.
             // If the measured ratio fits another gear, it is that label lag, not slip.
             val lag = r != null && (1..6).any { it != s.gear && abs(r / Gm.GEAR_RATIO[it - 1] - 1) < 0.05 }
             val ok = p != null && !shifted && p.gear == s.gear && steady(p, s) && !lag

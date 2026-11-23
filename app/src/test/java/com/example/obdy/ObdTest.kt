@@ -606,7 +606,7 @@ class InsightsTest {
     @Test fun shiftCaptureSmoothDownshift() {
         val l = capture(::smoothTurb) { 600.0 }
         val s = l.first { it.startsWith("[SHIFT-FAST]") }
-        assertTrue(s.contains("D3->D2 down") && s.contains("dur<=660 ms") && s.contains("flare=0.0%") && s.contains("tie=0.0%"))
+        assertTrue(s.contains("D3->D2 down") && s.contains("dur<=660 ms") && s.contains("flare=0.0%") && s.contains("tie=0.0%") && s.contains("spike=0.0"))
         assertTrue(l.none { it.startsWith("[SHOCK?]") })
     }
 
@@ -618,6 +618,19 @@ class InsightsTest {
     @Test fun shiftCaptureFlagsFlare() {
         val l = capture({ i -> if (i == 5) 3300.0 else smoothTurb(i) }) { 600.0 }   // ratio 5.5, far above both gears
         assertTrue(l.first { it.startsWith("[SHIFT-FAST]") }.contains("flare=85."))
+    }
+
+    @Test fun shiftCaptureIgnoresNeighbouringShift() {
+        val c = ShiftCapture(); val lines = ArrayList<String>()
+        fun turb(i: Int) = when { i <= 4 -> 1147.0; i == 5 -> 1300.0; i == 6 -> 1600.0; i in 7..8 -> 1778.0; else -> 2750.0 }   // D3, D2, then D1 (ratio 4.58)
+        for (i in 0..15) lines.addAll(c.add(ShiftCapture.S(i * 220L, if (i < 5) 3 else if (i < 8) 2 else 1, turb(i), 600.0)))
+        val first = lines.first { it.startsWith("[SHIFT-FAST] D3->D2") }
+        assertTrue(first.contains("flare=0.0%"))
+    }
+
+    @Test fun shiftCaptureBrakingStepIsNotAShock() {
+        val l = capture(::smoothTurb) { i -> if (i < 4) 600.0 else 600.0 - (i - 3) * 30.0 }   // steady 1.7 m/s2 braking from sample 4 on
+        assertTrue(l.none { it.startsWith("[SHOCK?]") })
     }
 
     @Test fun shiftCaptureSkipsWhenTooFewSamples() {

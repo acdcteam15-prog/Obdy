@@ -494,10 +494,10 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         if ((lv == 0x06 || lv == 0x08) && (liveValues[0x0D] ?: 0.0) in 3.0..45.0) {
                             val tftNow = extValues["Transmission fluid temp (GM)"]
                             c.exclusive {
-                                gearBurst(1800) { t, g, tb, ou ->
+                                gearBurst(5000) { t, g, tb, ou ->      // keeps going while the car is still in the slow band, so no shift falls into a gap
                                     AppLog.i("[GFAST] gear=${g ?: "-"} turb=${tb?.toInt() ?: "-"} outp=${ou?.toInt() ?: "-"}")
                                     for (line in shiftCap.add(ShiftCapture.S(t, g, tb, ou, tftNow))) AppLog.i(line)
-                                    true
+                                    ou == null || ou / ShiftCapture.RPM_PER_KMH in 2.0..50.0
                                 }
                             }
                         }
