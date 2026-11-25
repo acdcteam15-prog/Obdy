@@ -1929,7 +1929,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         val bc = withCar { broadcastFaults() } ?: return
         if (bc.isEmpty()) { AppLog.i("[MODULE-FAULTS] ($why) no module reported a code"); return }
         for ((id, frames) in bc) {
-            val name = foundModules.firstOrNull { Gm.uudtId(it.probe.resp) == id }?.name ?: "module $id"
+            val name = foundModules.firstOrNull { Gm.uudtId(it.probe.resp) == id }?.name ?: when (id) { "541" -> "Body control (BCM) 541"; "542" -> "Module 242 (addr 31, steering) 542"; "543" -> "Brakes / ABS (EBCM) 543"; "549" -> "Module 249 549"; "554" -> "Module 254 554"; "5E8" -> "Engine (ECM) 5E8"; "5EA" -> "Transmission (TCM) 5EA"; "5EB" -> "Fuel pump (FPCM) 5EB"; else -> "module $id" }
             val list = DtcDecode.fromGmlanRows(frames)
             AppLog.i("[MODULE-FAULTS] ($why) $name: " + (if (list.isEmpty()) "answered, no decoded code" else list.joinToString("; ") { "${it.code} ${it.status}" }) +
                 " | raw " + frames.joinToString(" / ") { it.hex() })
