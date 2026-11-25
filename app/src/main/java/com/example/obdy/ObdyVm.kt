@@ -412,10 +412,12 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     private fun stopLive() { liveJob?.cancel(); liveJob = null; liveRunning = false }
 
+    private var liveStartMs = 0L
     private fun startLive() {
         val c = client ?: return
         if (liveJob?.isActive == true) return
         liveRunning = true
+        liveStartMs = System.currentTimeMillis(); lastModuleLogMs = 0L
         liveJob = viewModelScope.launch {
             try {
                 var last = System.nanoTime()
@@ -481,6 +483,15 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (0x42 in ids && (volt42Bad || (dead[0x42] ?: 0) >= 3) && cycle % 4 == 0) {
                         c.exclusive { voltage() }?.let { liveValues[0x42] = it }
                     }
+                    // Every module's codes into the log: 20 s after connecting, then every 3 minutes, never inside the slow-driving shift capture.
+                    run {
+                        val now = System.currentTimeMillis()
+                        val kmh = liveValues[0x0D] ?: 0.0
+                        val due = if (lastModuleLogMs == 0L) now - liveStartMs > 20_000 else now - lastModuleLogMs > 180_000
+                        if (due && answered > 0 && !(gearLever == 0x06 && kmh in 3.0..45.0)) {
+                            try { logModuleFaults("auto") } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                        }
+                    }
                     if (showExt && Gm.GEAR_ID in liveSel && cycle % 2 == 0 && ((dead[-0x1001] ?: 0) < 5 || cycle % 32 == 0)) {   // lever + gear from the TCM (about 70 ms each)
                         val lv = c.exclusive { readExt(Gm.leverPid) }?.toInt()
                         val gr = if (lv == 0x06 || lv == 0x08) c.exclusive { readExt(Gm.gearPid) }?.toInt() else null
@@ -514,7 +525,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     if (dt > 20.0) {
                         // The app was frozen (screen locked, background): what is on screen is old, and a trip must not count the gap as driving.
                         AppLog.i("[APP] live data was paused ${dt.toInt()} s: old values dropped, waiting for fresh readings", true)
-                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear(); gearLog.reset(); shiftCap.reset()
+                        liveValues.clear(); rawValues.clear(); extValues.clear(); dead.clear(); gearLog.reset(); shiftCap.reset(); lastModuleLogMs = 0L; liveStartMs = System.currentTimeMillis()
                         ectGuard.reset(); ectNote = null; lowChargeSec = 0.0
                         say("Live data was paused for ${dt.toInt() / 60} min. Old values were cleared; fresh readings follow.")
                         dt = 0.0
@@ -1911,7 +1922,22 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The "it is happening now" button. */
+    /** Asks every module at once for its codes (read only) and writes them to the log. Steering, ABS, TCM and body codes were never in the log before. */
+    private var lastModuleLogMs = 0L
+    private suspend fun logModuleFaults(why: String) {
+        lastModuleLogMs = System.currentTimeMillis()
+        val bc = withCar { broadcastFaults() } ?: return
+        if (bc.isEmpty()) { AppLog.i("[MODULE-FAULTS] ($why) no module reported a code"); return }
+        for ((id, frames) in bc) {
+            val name = foundModules.firstOrNull { Gm.uudtId(it.probe.resp) == id }?.name ?: "module $id"
+            val list = DtcDecode.fromGmlanRows(frames)
+            AppLog.i("[MODULE-FAULTS] ($why) $name: " + (if (list.isEmpty()) "answered, no decoded code" else list.joinToString("; ") { "${it.code} ${it.status}" }) +
+                " | raw " + frames.joinToString(" / ") { it.hex() })
+        }
+    }
+
     fun markSymptom(note: String) {
+        viewModelScope.launch { try { logModuleFaults("at mark") } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
         AppLog.i("[MARK] symptom now: ${note.ifBlank { "marked by you" }} | gear=${Gm.gearLabel(gearLever, gearNow)} " + liveValues.entries.sortedBy { it.key }.joinToString(" ") { "%02X=%s".format(it.key, Calc.fmt(it.value, 1)) })
         if (saveSnapshot("Symptom: " + note.ifBlank { "marked by you" })) say("Saved the last minute of data") }
 
