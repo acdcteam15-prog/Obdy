@@ -238,18 +238,6 @@ class ProTools(private val vm: ObdyVm) {
     var sweepNote by mutableStateOf("")
     private var sweepCancel = false
 
-    fun startSweep(m: FoundModule, r: SweepRange) {
-        if (sweepBusy || !connected()) return
-        sweepModule = m; sweepRange = r; sweepHits.clear(); sweepNext = -1
-        runSweep(m, r.from, r.to)
-    }
-
-    fun continueSweep() {
-        val m = sweepModule ?: return; val r = sweepRange ?: return
-        if (sweepBusy || sweepNext !in r.from..r.to || !connected()) return
-        runSweep(m, sweepNext, r.to)
-    }
-
     fun stopSweep() { sweepCancel = true }
 
     // ---- one button: every module, every range, every answer into the log
@@ -334,7 +322,7 @@ class ProTools(private val vm: ObdyVm) {
         val dir = File(vm.appCtx.filesDir, "reports").also { it.mkdirs() }
         val f = File(dir, "sweep_" + System.currentTimeMillis() + ".csv")
         f.writeText("module;request;answer id;did;state;bytes\n" + sweepHits.toList().joinToString("\n") { h ->
-            val m = hitModules[h]; "${m?.name ?: sweepModule?.name ?: ""};${m?.probe?.req ?: ""};${m?.probe?.resp ?: ""};${h.code};${h.state.label};${h.hex()}"
+            val m = hitModules[h]; "${m?.name ?: ""};${m?.probe?.req ?: ""};${m?.probe?.resp ?: ""};${h.code};${h.state.label};${h.hex()}"
         })
         vm.shareFile(f, "text/csv")
     }
