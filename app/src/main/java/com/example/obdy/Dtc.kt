@@ -1,7 +1,7 @@
 package com.example.obdy
 
 /** One fault code found in one module. */
-class Fault(val code: String, val module: String, val kind: String, val status: String = "", val raw: String = "") {
+class Fault(val code: String, val module: String, val kind: String, val status: String = "", val raw: String = "", val kinds: String = kind) {
     val description: String get() = DtcDb.describe(code)
     val key: String get() = "$module/$code/$kind"
 }

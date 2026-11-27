@@ -588,7 +588,7 @@ fun FaultsScreen(vm: ObdyVm) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("Clear all codes?") },
-            text = { Text("This erases the codes AND the freeze frame, turns the warning light off and resets the readiness monitors (the car needs about 50 km of mixed driving to be ready for an emissions test again). The problem is not fixed by clearing: if it is real, the code will return. This scan has been saved in the history.") },
+            text = { Text((if ((vm.liveValues[0x0C] ?: 0.0) > 300.0) "The engine is running: a fault that is active right now can come back within seconds. " else "") + "This erases the codes AND the freeze frame, turns the warning light off and resets the readiness monitors (the car needs about 50 km of mixed driving to be ready for an emissions test again). The problem is not fixed by clearing: if it is real, the code will return. This scan has been saved in the history.") },
             confirmButton = { TextButton(onClick = { confirmClear = false; vm.clearCodes() }) { Text("Clear") } },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
         )
@@ -603,7 +603,7 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             AppIcon(Ic.Warning, size = 22.dp, color = c)
             Text(f.code, color = c, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Pill(f.kind, Brand.Blue)
+            Pill(f.kinds, Brand.Blue)
             val fs = FaultStates.of(f)
             Pill(fs.label, when (fs) { FaultState.Active -> Brand.Red; FaultState.Pending -> Brand.Amber; else -> Brand.TextSecondary })
             Spacer(Modifier.weight(1f))
@@ -613,8 +613,19 @@ fun FaultCard(vm: ObdyVm, f: Fault, expanded: Boolean, onToggle: () -> Unit) {
         AnimatedVisibility(visible = expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Spacer(Modifier.height(2.dp))
-                kindText(f.kind)?.let { Label(it, color = Brand.Blue, size = 13) }
+                for (k in f.kinds.split(" + ")) kindText(k)?.let { Label(it, color = Brand.Blue, size = 13) }
                 if (f.code.take(5) in setOf("P0011", "P0012", "P0014", "P0016", "P0017", "P0008", "P0009", "P0521", "P0520")) vm.oilNote()?.let { Label("Oil: $it", color = Brand.Amber, size = 12) }
+                if (f.code.take(5) in setOf("P0011", "P0010", "P0012", "P0014", "P0016", "P0017")) {
+                    val cam = vm.camMonitorLines()
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brand.Track).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Cam timing check", color = Brand.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        if (cam.isEmpty()) Text("Engine self-test for valve timing not read yet: Tools → self-tests (Mode 06).", color = Brand.TextPrimary, fontSize = 12.sp)
+                        for (l in cam) Text(l, color = Brand.TextPrimary, fontSize = 12.sp)
+                        Text("Does it set on a cold start or only when hot? Is the oil level and grade right? Tell the mechanic both.", color = Brand.TextSecondary, fontSize = 12.sp)
+                        if (vm.camTestText.isNotBlank()) Text(vm.camTestText, color = Brand.Amber, fontSize = 12.sp)
+                        SoftButton(if (vm.camTestBusy) "Stop cam test" else "Run cam test (idle 60 s + 2,500 rpm 30 s)", Modifier.fillMaxWidth()) { if (vm.camTestBusy) vm.stopCamTest() else vm.startCamTest() }
+                    }
+                }
                 if (f.code.startsWith("C04") || f.code.startsWith("C05") || f.code.startsWith("C08")) SoftButton("Run the power steering check", Modifier.fillMaxWidth()) { vm.overlay = "steering" }
                 vm.storyFor(f)?.let { st ->
                     Label("History: first seen ${fmtDate(st.firstMs)}" + (if (st.firstKm > 0) " at %,d km".format(st.firstKm) else "") + "  ·  in ${st.seen} scan(s)" + (if (st.returns > 0) "  ·  came back ${st.returns}×" else ""), color = if (st.returns > 0) Brand.Amber else Brand.TextSecondary, size = 12)

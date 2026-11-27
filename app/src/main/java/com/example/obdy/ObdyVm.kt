@@ -982,7 +982,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                     }
                     if (store.deepMode06) {
                         scanProgress = "Engine self-test results (Mode 06)..."; scanFraction = 0.93f
-                        withCar { readMode06 { p -> scanProgress = "Self-tests: $p" } }?.let { tests = it; testsRead = true }
+                        withCar { readMode06 { p -> scanProgress = "Self-tests: $p" } }?.let { tests = it; testsRead = true; logTests(it) }
                     }
                     // Last net: ask everyone at once for codes; anything from a module we did not read is added under its id.
                     scanProgress = "Final check: any module with a code..."; scanFraction = 0.95f
@@ -1009,18 +1009,19 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                 }
                 all.addAll(moduleFaults)
                 faults = all.distinctBy { it.key }; monitors = mon; freeze = fr; scanNotes = notes
+                logFreeze(fr)
                 lastScanMs = System.currentTimeMillis()
                 // Codes that were not in the previous scan (the first scan ever has nothing to compare with).
                 val prev = scanHistory.firstOrNull()
                 newCodes = if (prev == null) emptyList() else faults.filter { f -> prev.faults.none { it.code.take(5) == f.code.take(5) && it.module == f.module } }
                 if (autoScanRun && newCodes.isNotEmpty()) Notifier.newCodes(ctx, newCodes.map { "${it.code} ${it.description}" })
                 autoScanRun = false
-                AppLog.i("[SCAN ${if (deep) "DEEP" else "QUICK"} RESULT] light=${if (mon?.milOn == true) "ON" else "off"} voltage=$voltage codes=${faults.size}", keep = true)
+                AppLog.i("[SCAN ${if (deep) "DEEP" else "QUICK"} RESULT] light=${if (mon?.milOn == true) "ON" else "off"} voltage=$voltage codes=${mergeSame(faults).size}", keep = true)
                 for (f in faults) AppLog.i("[SCAN] ${f.code} [${f.kind}] ${f.module}: ${DtcDb.describe(f.code)}", keep = true)
                 for (n in notes) AppLog.i("[SCAN NOTE] $n", keep = true)
                 store.addScan(ScanRecord(lastScanMs, car.odometerKm, mon?.milOn, faults, voltage, notes.joinToString(" | ")))
                 scanHistory = store.loadScans()
-                say(if (faults.isEmpty()) "No fault codes found." else "${faults.size} fault code(s) found.")
+                say(if (faults.isEmpty()) "No fault codes found." else "${mergeSame(faults).size} fault code(s) found.")
             } finally {
                 if (deep) livePaused = pausedBefore
                 scanBusy = false; scanProgress = ""; scanFraction = null
@@ -1639,7 +1640,15 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ hide a code inside Obdy (the car is not changed)
     var ignored by mutableStateOf(store.loadIgnored())
-    val visibleFaults: List<Fault> get() = faults.filter { it.code.take(5) !in ignored }
+    /** One entry per module and code: the same code reported as stored, pending and permanent is ONE fault with all its types. */
+    private fun mergeSame(list: List<Fault>): List<Fault> = list.groupBy { it.module + "/" + it.code }.values.map { g ->
+        if (g.size == 1) g[0] else {
+            val rank = { f: Fault -> when (FaultStates.of(f)) { FaultState.Active -> 0; FaultState.Pending -> 1; FaultState.Stored -> 2; FaultState.History -> 3 } }
+            val rep = g.minByOrNull(rank)!!
+            Fault(rep.code, rep.module, rep.kind, rep.status, g.map { it.raw }.filter { it.isNotBlank() }.distinct().joinToString(" / "), g.map { it.kind }.distinct().joinToString(" + "))
+        }
+    }
+    val visibleFaults: List<Fault> get() = mergeSame(faults.filter { it.code.take(5) !in ignored })
     val hiddenFaults: List<Fault> get() = faults.filter { it.code.take(5) in ignored }
 
     fun ignoreCode(code: String) {
@@ -1674,7 +1683,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
         if (conn != Conn.On) { say("Connect to the car first."); return }
         testsBusy = true; testsProgress = "Asking which tests exist..."
         viewModelScope.launch {
-            try { tests = withCar { readMode06 { p -> testsProgress = p } } ?: emptyList(); testsRead = true } finally { testsBusy = false; testsProgress = "" }
+            try { tests = withCar { readMode06 { p -> testsProgress = p } } ?: emptyList(); testsRead = true; logTests(tests) } finally { testsBusy = false; testsProgress = "" }
         }
     }
 
@@ -1922,6 +1931,62 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     }
 
     /** The "it is happening now" button. */
+    // ------------------------------------------------------------------ cam timing test (idle 60 s, then 2,500 rpm 30 s)
+    var camTestText by mutableStateOf("")
+    var camTestBusy by mutableStateOf(false)
+    private var camTestJob: Job? = null
+
+    /** Cam timing monitor from the engine's self-tests (Mode 06, VVT bank 1/2): value against its limit. */
+    fun camMonitorLines(): List<String> = tests.filter { it.mid == 0x35 || it.mid == 0x36 }.map {
+        "${it.name}: ${it.fmt(it.value)} (limit ${it.fmt(it.min)} to ${it.fmt(it.max)}) " + if (it.pass) "inside" else "OUTSIDE"
+    }
+
+    fun stopCamTest() { camTestJob?.cancel(); camTestBusy = false; camTestText = "Stopped." }
+
+    /** Needs the engine warm and running, the car stopped, Live data on. Records rpm, MAP, load, spark advance; writes [CAMTEST] lines. */
+    fun startCamTest() {
+        if (camTestBusy) return
+        val ids = intArrayOf(0x0C, 0x0B, 0x04, 0x0E, 0x05)
+        if (ids.any { it !in liveSel }) { camTestText = "Turn on Engine speed, Intake manifold pressure, Engine load, Timing advance and Coolant in Live → Choose values first."; return }
+        if (!liveRunning) { camTestText = "Open the Live screen first (data must be running)."; return }
+        if ((liveValues[0x0D] ?: 0.0) > 1.0) { camTestText = "The car must be stopped (park, handbrake)."; return }
+        if ((liveValues[0x05] ?: 0.0) < 80.0) { camTestText = "Warm the engine first: coolant must be 80 °C or more (now ${Calc.fmt(liveValues[0x05] ?: 0.0, 0)})."; return }
+        camTestBusy = true
+        camTestJob = viewModelScope.launch {
+            try {
+                for ((name, secs, text) in listOf(Triple("IDLE", 60, "Idle in P/N: hands and feet off, A/C off. 60 s"), Triple("2500", 30, "Hold about 2,500 rpm steady with the pedal. 30 s"))) {
+                    val rpm = ArrayList<Double>(); val map = ArrayList<Double>(); val load = ArrayList<Double>(); val adv = ArrayList<Double>()
+                    for (left in secs downTo 1) {
+                        camTestText = "$text — $left s left"
+                        delay(1000)
+                        // skip the first 8 s of each phase while the engine settles
+                        if (secs - left < 8) continue
+                        liveValues[0x0C]?.let { rpm.add(it) }; liveValues[0x0B]?.let { map.add(it) }; liveValues[0x04]?.let { load.add(it) }; liveValues[0x0E]?.let { adv.add(it) }
+                    }
+                    fun st(l: List<Double>) = if (l.isEmpty()) "no data" else { val m = l.average(); val sd = Math.sqrt(l.sumOf { (it - m) * (it - m) } / l.size); "avg ${Calc.fmt(m, 1)} sd ${Calc.fmt(sd, 1)} min ${Calc.fmt(l.minOrNull() ?: 0.0, 1)} max ${Calc.fmt(l.maxOrNull() ?: 0.0, 1)}" }
+                    AppLog.i("[CAMTEST] $name coolant=${Calc.fmt(liveValues[0x05] ?: 0.0, 0)} rpm: ${st(rpm)} | MAP: ${st(map)} | load: ${st(load)} | spark advance: ${st(adv)}", keep = true)
+                }
+                camTestText = "Done. Results are in the log. Share the full log."
+            } finally { camTestBusy = false }
+        }
+    }
+
+    /** The engine's own snapshot taken when the code was set (speed, rpm, load, coolant ...): the exact conditions of the fault. */
+    private fun logFreeze(fr: FreezeFrame?) {
+        if (fr == null) { AppLog.i("[FREEZE] the engine gave no freeze frame"); return }
+        AppLog.i("[FREEZE] code=${fr.code ?: "none stored"} " + fr.values.joinToString(" ") { (p, v) -> "${p.name.replace(' ', '_')}=${Calc.fmt(v, 1)}" })
+    }
+
+    /** Engine self-test results (Mode 06): every failing one, plus anything about cam, valve timing or phaser, with value and limits. */
+    private fun logTests(list: List<TestResult>) {
+        val pick = list.filter { !it.pass || Regex("cam|vvt|valve|phaser|variable", RegexOption.IGNORE_CASE).containsMatchIn(it.name) }
+        AppLog.i("[TESTS] ${list.size} self-test records, ${list.count { !it.pass }} outside limits" + if (pick.isEmpty()) "" else ":")
+        for (t in pick.take(40)) {
+            val ids = "MID %02X TID %02X".format(t.mid, t.tid)
+            AppLog.i("[TESTS] ${t.name} ($ids, ${t.what}): value=${t.fmt(t.value)} min=${t.fmt(t.min)} max=${t.fmt(t.max)} ${if (t.pass) "ok" else "OUT OF LIMITS"}")
+        }
+    }
+
     /** Asks every module at once for its codes (read only) and writes them to the log. Steering, ABS, TCM and body codes were never in the log before. */
     private var lastModuleLogMs = 0L
     private suspend fun logModuleFaults(why: String) {
