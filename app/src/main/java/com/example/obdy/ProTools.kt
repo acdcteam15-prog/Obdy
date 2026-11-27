@@ -252,22 +252,90 @@ class ProTools(private val vm: ObdyVm) {
 
     fun stopSweep() { sweepCancel = true }
 
-    private fun runSweep(m: FoundModule, from: Int, to: Int) {
-        sweepBusy = true; sweepCancel = false; sweepNote = ""; sweepAt = from; vm.livePaused = true
+    // ---- one button: every module, every range, every answer into the log
+    /** Identifiers read in small slices between live samples while driving (req, resp, did). */
+    var recordList by mutableStateOf(run {
+        val saved = vm.store.recordIds
+        val src = if (saved.isBlank()) EcmDids.LIST.split(',').filter { it.length == 4 }.joinToString(";") { "${EcmDids.REQ},${EcmDids.RESP},$it" } else saved
+        src.split(';').mapNotNull { e -> e.split(',').takeIf { it.size == 3 }?.let { Triple(it[0], it[1], it[2]) } }
+    })
+    fun clearRecordList() { recordList = emptyList(); vm.store.recordIds = "-"; }
+    private fun saveRecordList() { vm.store.recordIds = recordList.joinToString(";") { "${it.first},${it.second},${it.third}" } }
+    var sweepStep by mutableStateOf("")
+    var sweepFrac by mutableStateOf(0f)
+    private val hitModules = HashMap<DidHit, FoundModule>()
+    fun hitModule(h: DidHit): FoundModule? = hitModules[h]
+
+    /** Where a stopped scan can go on: module number, range number, next identifier. */
+    var sweepResume by mutableStateOf<Triple<Int, Int, Int>?>(null)
+    val sweepResumeText: String get() = sweepResume?.let { r ->
+        val m = allModules().getOrNull(r.first); val rg = DidSweep.presets.getOrNull(r.second)
+        if (m == null || rg == null) "" else "${m.name} · %04X".format(r.third)
+    } ?: ""
+
+    /** Read only (service 22). Needs the car stopped. Every identifier that answers is written to the log as [SWEEP-HIT]. [resume] goes on where it was stopped. */
+    fun startFullSweep(resume: Boolean = false) {
+        if (sweepBusy || !connected()) return
+        if ((vm.liveValues[0x0D] ?: 0.0) > 1.0) { sweepNote = "The car must be stopped (park, handbrake)."; return }
+        val mods = allModules()
+        if (mods.isEmpty()) { sweepNote = "Run a Deep scan first so Obdy knows the modules."; return }
+        val ranges = DidSweep.presets
+        val perModule = ranges.sumOf { it.to - it.from + 1 }
+        val total = (mods.size * perModule).toFloat()
+        val from0 = if (resume) sweepResume else null
+        val startM = from0?.first?.takeIf { it < mods.size } ?: 0
+        val startR = if (from0 != null && startM == from0.first) from0.second.coerceIn(0, ranges.size - 1) else 0
+        val startD = if (from0 != null && startM == from0.first) from0.third else ranges[0].from
+        var done = startM * perModule + ranges.take(startR).sumOf { it.to - it.from + 1 } + (if (from0 != null) (startD - ranges[startR].from).coerceAtLeast(0) else 0)
+        sweepBusy = true; sweepCancel = false; sweepNote = ""; sweepResume = null; sweepFrac = (done / total).coerceIn(0f, 1f); vm.livePaused = true
+        if (from0 == null) { sweepHits.clear(); hitModules.clear() }
         scope.launch {
+            AppLog.i("[SWEEP ALL] ${if (from0 != null) "continue" else "start"}: ${mods.size} module(s), ${ranges.size} ranges each", keep = true)
             try {
-                val end = vm.withCar { sweepDids(m, from, to, { sweepCancel }, { h -> sweepHits.add(h) }, { d -> sweepAt = d }) }
-                sweepNext = end?.next ?: from
-                sweepNote = end?.note ?: if (end == null) "No answer from the adapter." else "Finished: ${sweepHits.size} identifier(s) found."
-            } finally { sweepBusy = false; vm.livePaused = false }
+                for (mi in startM until mods.size) {
+                    val m = mods[mi]
+                    var found = 0; var why = ""
+                    for ((ri, r) in ranges.withIndex()) {
+                        if (mi == startM && ri < startR) continue
+                        if (sweepCancel) break
+                        val first = if (mi == startM && ri == startR && from0 != null) startD else r.from
+                        if (first > r.to) continue
+                        sweepStep = "${m.name} (${mi + 1}/${mods.size}) · ${r.label}"
+                        val base = done - (first - r.from)
+                        val end = vm.withCar {
+                            sweepDids(m, first, r.to, { sweepCancel },
+                                { h -> found++; sweepHits.add(h); hitModules[h] = m; AppLog.i("[SWEEP-HIT] ${m.name} ${m.probe.req}/${m.probe.resp} 22 ${h.code} ${h.state.label} ${h.hex()}", keep = true) },
+                                { d -> sweepAt = d; sweepFrac = ((base + (d - r.from)) / total).coerceIn(0f, 1f) })
+                        }
+                        if (end == null) { sweepResume = Triple(mi, ri, first); why = "no answer from the adapter"; sweepCancel = true; break }
+                        if (sweepCancel) { sweepResume = Triple(mi, ri, end.next.coerceAtMost(r.to + 1).let { if (it > r.to) r.to else it }); break }
+                        done = base + (r.to - r.from + 1)
+                        sweepFrac = (done / total).coerceIn(0f, 1f)
+                        if (end.note != null && end.next <= r.to) {
+                            why = end.note
+                            done += ranges.drop(ri + 1).sumOf { it.to - it.from + 1 }      // the rest of this module is skipped
+                            break
+                        }
+                    }
+                    AppLog.i("[SWEEP ALL] ${m.name} ${m.probe.req}/${m.probe.resp}: $found identifier(s) answered" + (if (why.isNotBlank()) " ($why)" else ""), keep = true)
+                    if (sweepCancel) break
+                }
+                val found = hitModules.entries.filter { it.key.state == DidState.Answers && it.key.payload.isNotEmpty() }
+                    .map { Triple(it.value.probe.req, it.value.probe.resp, it.key.code) }.distinct().take(450)
+                if (found.isNotEmpty()) { recordList = found; saveRecordList() }
+                sweepNote = if (sweepCancel) "Stopped. ${sweepHits.size} found so far, all in the log. You can continue." else "Finished: ${sweepHits.size} identifier(s) found, all in the log. Share the full log."
+                AppLog.i("[SWEEP ALL] ${if (sweepCancel) "stopped" else "finished"}: ${sweepHits.size} identifier(s) in total", keep = true)
+            } finally { sweepBusy = false; sweepStep = ""; vm.livePaused = false }
         }
     }
 
     fun shareSweep() {
-        val m = sweepModule ?: return
+        if (sweepHits.isEmpty()) return
         val dir = File(vm.appCtx.filesDir, "reports").also { it.mkdirs() }
-        val f = File(dir, "sweep_${m.probe.resp}_" + System.currentTimeMillis() + ".csv")
-        f.writeText("module;request;answer id;did;state;bytes\n" + sweepHits.joinToString("\n") { "${m.name};${m.probe.req};${m.probe.resp};${it.code};${it.state.label};${it.hex()}" })
+        val f = File(dir, "sweep_" + System.currentTimeMillis() + ".csv")
+        f.writeText("module;request;answer id;did;state;bytes\n" + sweepHits.toList().joinToString("\n") { h ->
+            val m = hitModules[h]; "${m?.name ?: sweepModule?.name ?: ""};${m?.probe?.req ?: ""};${m?.probe?.resp ?: ""};${h.code};${h.state.label};${h.hex()}"
+        })
         vm.shareFile(f, "text/csv")
     }
 

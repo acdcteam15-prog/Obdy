@@ -384,15 +384,6 @@ fun LiveScreen(vm: ObdyVm) {
         if (vm.conn != Conn.On) {
             Panel { Label("Not connected."); GradientButton("Connect to the car", Brand.AltBrush) { vm.overlay = "connect" } }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftButton(if (vm.recOn) "■ Stop (${vm.recRows})" else "● Record", Modifier.weight(1f)) { if (vm.recOn) vm.stopRecording() else vm.startRecording() }
-                SoftButton("Choose values", Modifier.weight(1f)) { pick = true }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftButton(if (vm.tripOn) "■ End trip" else "▶ Start trip + fuel", Modifier.weight(1f)) { if (vm.tripOn) vm.stopTrip() else vm.startTrip() }
-                SoftButton("Graphs", Modifier.weight(1f)) { vm.overlay = "records" }
-            }
-            SymptomButton(vm, Modifier.fillMaxWidth())
             if (vm.tripOn) Panel {
                 Title("Trip in progress")
                 Label("${Calc.fmt(vm.tripKm, 2)} km  ·  ${Calc.fmt(vm.tripLiters, 2)} L  ·  ${(vm.tripSeconds / 60).toInt()} min")
@@ -411,6 +402,15 @@ fun LiveScreen(vm: ObdyVm) {
                     else -> { val p = Pids.byId(id)!!; GaugeCard(p.name, vm.liveValues[p.id], p.unit, p.min, p.max, m, decimals = if (p.max <= 10) 2 else if (p.max <= 200) 1 else 0, hint = p.hint) }
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SoftButton(if (vm.recOn) "■ Stop (${vm.recRows})" else "● Record", Modifier.weight(1f)) { if (vm.recOn) vm.stopRecording() else vm.startRecording() }
+                SoftButton("Choose values", Modifier.weight(1f)) { pick = true }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SoftButton(if (vm.tripOn) "■ End trip" else "▶ Start trip + fuel", Modifier.weight(1f)) { if (vm.tripOn) vm.stopTrip() else vm.startTrip() }
+                SoftButton("Graphs", Modifier.weight(1f)) { vm.overlay = "records" }
+            }
+            SymptomButton(vm, Modifier.fillMaxWidth())
         }
     }
     if (pick) {

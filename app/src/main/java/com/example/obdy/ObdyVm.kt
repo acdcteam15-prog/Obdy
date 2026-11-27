@@ -413,6 +413,7 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
     private fun stopLive() { liveJob?.cancel(); liveJob = null; liveRunning = false }
 
     private var liveStartMs = 0L
+    private var recordIdx = 0
     private fun startLive() {
         val c = client ?: return
         if (liveJob?.isActive == true) return
@@ -490,6 +491,24 @@ class ObdyVm(app: Application) : AndroidViewModel(app) {
                         val due = if (lastModuleLogMs == 0L) now - liveStartMs > 20_000 else now - lastModuleLogMs > 180_000
                         if (due && answered > 0 && !(gearLever == 0x06 && kmh in 3.0..45.0)) {
                             try { logModuleFaults("auto") } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                        }
+                    }
+                    // Every identifier the sweep found, 4 per cycle in rotation, raw into the log: lets us match them with rpm, load and temperature later.
+                    run {
+                        val rec = pro.recordList
+                        val slow = gearLever == 0x06 && (liveValues[0x0D] ?: 0.0) in 3.0..45.0
+                        if (rec.isNotEmpty() && !slow && !pro.sweepBusy) {
+                            try {
+                                c.exclusive {
+                                    try {
+                                        repeat(4) {
+                                            val e = rec[recordIdx % rec.size]; recordIdx++
+                                            val d = readWatch(WatchDef("rec", e.first, e.second, e.third))
+                                            if (d != null) AppLog.i("[ALLDATA] ${e.second} ${e.third} " + d.joinToString(" ") { "%02X".format(it) })
+                                        }
+                                    } finally { resetBus() }
+                                }
+                            } catch (e: CancellationException) { throw e } catch (_: Exception) {}
                         }
                     }
                     if (showExt && Gm.GEAR_ID in liveSel && cycle % 2 == 0 && ((dead[-0x1001] ?: 0) < 5 || cycle % 32 == 0)) {   // lever + gear from the TCM (about 70 ms each)

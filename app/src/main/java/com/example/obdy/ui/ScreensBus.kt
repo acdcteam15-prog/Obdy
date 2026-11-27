@@ -270,8 +270,6 @@ fun SweepScreen(vm: ObdyVm) {
     val p = vm.pro
     DisposableEffect(Unit) { onDispose { p.stopSweep(); p.stopWatch() } }
     val mods = p.allModules()
-    var modIdx by remember { mutableStateOf(0) }
-    var rangeIdx by remember { mutableStateOf(0) }
     var adding by remember { mutableStateOf<DidHit?>(null) }
     var wName by remember { mutableStateOf("") }
     var wUnit by remember { mutableStateOf("") }
@@ -279,25 +277,21 @@ fun SweepScreen(vm: ObdyVm) {
     var wLen by remember { mutableStateOf("1") }
     var wScale by remember { mutableStateOf("1") }
     var wOff by remember { mutableStateOf("0") }
-    val m = mods.getOrNull(modIdx)
     ScreenFrame("Data sweep", { vm.overlay = null }, subtitle = "Find what each module can tell (read only)") {
         Panel {
-            Title("Sweep a module")
-            Hint("Asks one module for its data identifiers (service 22) one after another and lists the ones that answer.")
+            Title("Scan everything")
+            Hint("Asks every module for all the data it can give (read only) and writes each answer into the log. Park the car with the engine running and keep the screen on. It can take up to an hour; you can stop at any time.")
             if (mods.isEmpty()) Hint("Run a Deep scan first so Obdy knows the modules.")
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for ((i, x) in mods.withIndex()) Choice(x.name.take(22), modIdx == i) { modIdx = i }
-            }
-            for ((i, r) in DidSweep.presets.withIndex()) Row(Modifier.clickable { rangeIdx = i }, verticalAlignment = Alignment.CenterVertically) { Dot(if (rangeIdx == i) Brand.Accent else Brand.TextSecondary); Spacer(Modifier.width(6.dp)); Label(r.label, size = 13) }
             NeedCar(vm)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GradientButton(if (p.sweepBusy) "Sweeping..." else "Start", Brand.MainBrush, Modifier.weight(1f), enabled = !p.sweepBusy && m != null && vm.conn == Conn.On) { m?.let { p.startSweep(it, DidSweep.presets[rangeIdx]) } }
+                GradientButton(if (p.sweepBusy) "Scanning..." else "Scan everything", Brand.MainBrush, Modifier.weight(1f), enabled = !p.sweepBusy && mods.isNotEmpty() && vm.conn == Conn.On) { p.startFullSweep() }
                 SoftButton("Stop", Modifier.weight(1f), enabled = p.sweepBusy) { p.stopSweep() }
             }
-            val r = p.sweepRange
-            if (p.sweepBusy && r != null) { ProgressBar(((p.sweepAt - r.from).toFloat() / (r.to - r.from + 1)).coerceIn(0f, 1f)); Hint("At %04X  ·  ${p.sweepHits.size} found".format(p.sweepAt)) }
+            Hint(if (p.recordList.isEmpty()) "Recording while driving: off." else "While you drive, Obdy also records ${p.recordList.size} values the car answered (4 every second or two) into the log.")
+            if (p.recordList.isNotEmpty()) SoftButton("Stop recording these", Modifier.fillMaxWidth()) { p.clearRecordList() }
+            if (!p.sweepBusy && p.sweepResumeText.isNotBlank()) GradientButton("Continue: ${p.sweepResumeText}", Brand.AltBrush, Modifier.fillMaxWidth(), enabled = vm.conn == Conn.On) { p.startFullSweep(resume = true) }
+            if (p.sweepBusy) { ProgressBar(p.sweepFrac); Hint(p.sweepStep + "  ·  ${p.sweepHits.size} found") }
             if (!p.sweepBusy && p.sweepNote.isNotBlank()) Hint(p.sweepNote)
-            if (!p.sweepBusy && r != null && p.sweepNext in r.from..r.to) SoftButton("Continue from %04X".format(p.sweepNext), Modifier.fillMaxWidth(), enabled = vm.conn == Conn.On) { p.continueSweep() }
         }
         if (p.sweepHits.isNotEmpty()) Panel {
             Row(verticalAlignment = Alignment.CenterVertically) { Title("${p.sweepHits.size} found"); Spacer(Modifier.weight(1f)); SoftButton("Share CSV") { p.shareSweep() } }
@@ -332,6 +326,7 @@ fun SweepScreen(vm: ObdyVm) {
         }
     }
     val hit = adding
+    val m = hit?.let { p.hitModule(it) }
     if (hit != null && m != null) {
         AlertDialog(
             onDismissRequest = { adding = null },

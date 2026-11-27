@@ -42,6 +42,8 @@ class Store(private val ctx: Context) {
     var wifiPort: Int get() = prefs.getInt("wport", 35000); set(v) { prefs.edit().putInt("wport", v).apply() }
     var lastKind: String get() = prefs.getString("lastKind", "") ?: ""; set(v) { prefs.edit().putString("lastKind", v).apply() }
     var lastAddress: String get() = prefs.getString("lastAddr", "") ?: ""; set(v) { prefs.edit().putString("lastAddr", v).apply() }
+    /** "req,resp,did;..." identifiers recorded while driving; empty = the engine list from the 11-27 sweep. */
+    var recordIds: String get() = prefs.getString("recIds", "") ?: ""; set(v) { prefs.edit().putString("recIds", v).apply() }
     var autoConnect: Boolean get() = prefs.getBoolean("autoConnect", true); set(v) { prefs.edit().putBoolean("autoConnect", v).apply() }
     var keepScreenOn: Boolean get() = prefs.getBoolean("keepOn", true); set(v) { prefs.edit().putBoolean("keepOn", v).apply() }
     var autoScan: Boolean get() = prefs.getBoolean("autoScan", true); set(v) { prefs.edit().putBoolean("autoScan", v).apply() }
