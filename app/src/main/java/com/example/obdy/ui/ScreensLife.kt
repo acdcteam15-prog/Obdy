@@ -1,6 +1,8 @@
 package com.example.obdy.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -90,24 +92,49 @@ fun ParkingCard(vm: ObdyVm) {
 
 // ====================================================================================== Symptom button
 @Composable
+private fun SymptomDialog(vm: ObdyVm, onClose: () -> Unit) {
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("It is happening now") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Hint("Saves the last minute of live data as a recording, and a note in your history.")
+                Field("What do you notice? (e.g. A/C off message, shock 3 to 2)", note, { note = it })
+            }
+        },
+        confirmButton = { TextButton(onClick = { vm.markSymptom(note); onClose() }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+    )
+}
+
+@Composable
 fun SymptomButton(vm: ObdyVm, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     SoftButton("Mark symptom now", modifier, enabled = vm.conn == Conn.On) { open = true }
-    if (open) {
-        var note by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { open = false },
-            title = { Text("It is happening now") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Hint("Saves the last minute of live data as a recording, and a note in your history.")
-                    Field("What do you notice? (e.g. A/C off message, shock 3 to 2)", note, { note = it })
-                }
-            },
-            confirmButton = { TextButton(onClick = { vm.markSymptom(note); open = false }) { Text("Save") } },
-            dismissButton = { TextButton(onClick = { open = false }) { Text("Cancel") } },
-        )
+    if (open) SymptomDialog(vm) { open = false }
+}
+
+/** Floating button, always on top of the Live screen. One tap marks the moment (no dialog, safe while driving). Dimmed when the car is not connected. */
+@Composable
+fun SymptomFab(vm: ObdyVm, modifier: Modifier = Modifier) {
+    val on = vm.conn == Conn.On
+    val shape = RoundedCornerShape(28.dp)
+    Box(
+        modifier
+            .shadow(10.dp, shape)
+            .clip(shape)
+            .background(if (on) Brand.Red else Brand.CardBorder)
+            .clickable {
+                com.example.obdy.AppLog.i("[YOU] tapped \"Mark symptom (floating)\"")
+                if (on) vm.markSymptom("") else vm.say("Connect to the car first")
+            }
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("⚑ Mark symptom", color = androidx.compose.ui.graphics.Color.White, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
     }
+    
 }
 
 // ====================================================================================== Fuel log

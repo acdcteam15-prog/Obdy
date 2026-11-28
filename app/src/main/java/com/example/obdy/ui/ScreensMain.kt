@@ -380,6 +380,7 @@ fun HomeScreen(vm: ObdyVm) {
 fun LiveScreen(vm: ObdyVm) {
     DisposableEffect(Unit) { vm.wantLive("screen", true); onDispose { vm.wantLive("screen", false) } }
     var pick by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
     ScreenFrame("Live data", null) {
         if (vm.conn != Conn.On) {
             Panel { Label("Not connected."); GradientButton("Connect to the car", Brand.AltBrush) { vm.overlay = "connect" } }
@@ -410,8 +411,10 @@ fun LiveScreen(vm: ObdyVm) {
                 SoftButton(if (vm.tripOn) "■ End trip" else "▶ Start trip + fuel", Modifier.weight(1f)) { if (vm.tripOn) vm.stopTrip() else vm.startTrip() }
                 SoftButton("Graphs", Modifier.weight(1f)) { vm.overlay = "records" }
             }
-            SymptomButton(vm, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(72.dp))
         }
+    }
+    SymptomFab(vm, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp))
     }
     if (pick) {
         AlertDialog(
